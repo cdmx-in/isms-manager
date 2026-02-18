@@ -1,0 +1,137 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: isms-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-isms_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-isms_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-isms_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # No external port - internal network only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-isms_user} -d ${POSTGRES_DB:-isms_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - isms-network
+    restart: unless-stopped
+
+  # Redis for session management
+  redis:
+    image: redis:7-alpine
+    container_name: isms-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_secure_password}
+    volumes:
+      - redis_data:/data
+    # No external port - internal network only
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_secure_password}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - isms-network
+    restart: unless-stopped
+
+  # MinIO S3-compatible object storage
+  minio:
+    image: minio/minio:latest
+    container_name: isms-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio_secure_password}
+    volumes:
+      - minio_data:/data
+    # MinIO accessible internally on minio:9000 and minio:9001
+    # Uncomment below for external access to MinIO console:
+    # ports:
+    #   - "9200:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - isms-network
+    restart: unless-stopped
+
+  # Backend API (Express + TypeScript) with hot reload
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: isms-backend
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-isms_user}:${POSTGRES_PASSWORD:-isms_secure_password}@postgres:5432/${POSTGRES_DB:-isms_db}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_password}@redis:6379
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minio_admin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minio_secure_password}
+      MINIO_BUCKET: ${MINIO_BUCKET:-isms-files}
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-your-super-secret-refresh-key-change-in-production}
+      SESSION_SECRET: ${SESSION_SECRET:-your-session-secret-change-in-production}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_CALLBACK_URL: ${GOOGLE_CALLBACK_URL:-http://192.168.17.14:5173/api/auth/google/callback}
+      FRONTEND_URL: ${FRONTEND_URL:-http://192.168.17.14:8888}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://192.168.17.14:8888}
+      ITOP_BASE_URL: ${ITOP_BASE_URL:-https://help.cdmx.in/webservices/rest.php}
+      ITOP_USERNAME: ${ITOP_USERNAME:-gsuite_itop}
+      ITOP_PASSWORD: ${ITOP_PASSWORD:-ce1a5f2b695e_E}
+      ITOP_API_VERSION: ${ITOP_API_VERSION:-1.3}
+      GOOGLE_SERVICE_ACCOUNT_KEY_PATH: /app/config/google-service-account.json
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o-mini}
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+      - ./config/google-service-account.json:/app/config/google-service-account.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    networks:
+      - isms-network
+    restart: unless-stopped
+
+  # Frontend (React + Vite) with hot reload
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: isms-frontend
+    ports:
+      - "8888:5173"
+    environment:
+      VITE_API_URL: http://backend:4000
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - isms-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+networks:
+  isms-network:
+    driver: bridge

@@ -1,0 +1,936 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+// ============================================
+// AUTHENTICATION & AUTHORIZATION
+// ============================================
+
+enum Role {
+  ADMIN
+  LOCAL_ADMIN
+  AUDITOR
+  USER
+  VIEWER
+}
+
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+  GOOGLE_DRIVE
+}
+
+model User {
+  id                String       @id @default(uuid())
+  email             String       @unique
+  passwordHash      String?
+  firstName         String
+  lastName          String
+  avatar            String?
+  role              Role         @default(USER)
+  authProvider      AuthProvider @default(LOCAL)
+  authProviderId    String?
+  isActive          Boolean      @default(true)
+  isEmailVerified   Boolean      @default(false)
+  passwordResetToken String?
+  passwordResetExpires DateTime?
+  lastLoginAt       DateTime?
+  failedLoginAttempts Int        @default(0)
+  lockoutUntil      DateTime?
+  
+  // Google Drive tokens (encrypted)
+  googleDriveAccessToken  String?
+  googleDriveRefreshToken String?
+  googleDriveTokenExpiry  DateTime?
+  
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  // Relations
+  organizationMemberships OrganizationMember[]
+  createdAssets     Asset[]      @relation("AssetCreatedBy")
+  ownedAssets       Asset[]      @relation("AssetOwner")
+  createdRisks      Risk[]       @relation("RiskCreatedBy")
+  ownedRisks        Risk[]       @relation("RiskOwner")
+  retiredRisks      RiskRetirement[] @relation("RiskRetiredBy")
+  createdControls   Control[]    @relation("ControlCreatedBy")
+  assignedControls  Control[]    @relation("ControlAssignee")
+  createdIncidents  Incident[]   @relation("IncidentCreatedBy")
+  assignedIncidents Incident[]   @relation("IncidentAssignee")
+  uploadedFiles     FileUpload[]
+  auditLogs         AuditLog[]   @relation("AuditLogUser")
+
+  @@index([email])
+  @@index([authProvider, authProviderId])
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  sid       String   @unique
+  data      String
+  expiresAt DateTime
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sid])
+  @@index([expiresAt])
+}
+
+// ============================================
+// MULTI-TENANCY - ORGANIZATIONS
+// ============================================
+
+model Organization {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  logo        String?
+  isActive    Boolean  @default(true)
+  
+  // Risk acceptance thresholds (CIA triad)
+  riskAcceptConfidentiality Int @default(3)
+  riskAcceptIntegrity       Int @default(3)
+  riskAcceptAvailability    Int @default(3)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  members     OrganizationMember[]
+  assets      Asset[]
+  risks       Risk[]
+  controls       Control[]
+  incidents      Incident[]
+  audits         Audit[]
+  files          FileUpload[]
+  soaEntries     SoAEntry[]
+  driveFolders   DriveFolder[]
+  driveDocuments DriveDocument[]
+
+  @@index([slug])
+}
+
+model OrganizationMember {
+  id             String       @id @default(uuid())
+  userId         String
+  organizationId String
+  role           Role         @default(USER)
+  isDefault      Boolean      @default(false) // Default org for user
+  
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId])
+}
+
+// ============================================
+// ASSET MANAGEMENT
+// ============================================
+
+enum AssetClassification {
+  PUBLIC
+  INTERNAL
+  CONFIDENTIAL
+  RESTRICTED
+}
+
+enum AssetType {
+  HARDWARE
+  SOFTWARE
+  DATA
+  SERVICE
+  PERSONNEL
+  FACILITY
+  OTHER
+}
+
+model Asset {
+  id              String              @id @default(uuid())
+  organizationId  String
+  name            String
+  description     String?
+  assetType       AssetType           @default(OTHER)
+  classification  AssetClassification @default(INTERNAL)
+  location        String?
+  department      String?
+  
+  // Version control
+  version         Float               @default(0.1)
+  approvalStatus  ApprovalStatus      @default(DRAFT)
+  
+  // CIA values (1-5 scale)
+  valueConfidentiality Int @default(3)
+  valueIntegrity       Int @default(3)
+  valueAvailability    Int @default(3)
+  
+  // Risk values with controls applied
+  riskConfidentiality  Int?
+  riskIntegrity        Int?
+  riskAvailability     Int?
+  
+  ownerId         String?
+  createdById     String
+  isActive        Boolean  @default(true)
+  
+  // Retirement
+  isRetired       Boolean  @default(false)
+  retirementDate  DateTime?
+  retirementReason String?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner           User?        @relation("AssetOwner", fields: [ownerId], references: [id])
+  createdBy       User         @relation("AssetCreatedBy", fields: [createdById], references: [id])
+  risks           RiskAsset[]
+  controls        ControlAsset[]
+  incidents       IncidentAsset[]
+  files           FileUpload[]
+  versions        AssetVersion[]
+
+  @@index([organizationId])
+  @@index([ownerId])
+  @@index([classification])
+}
+
+model AssetVersion {
+  id              String    @id @default(uuid())
+  assetId         String
+  version         Float
+  
+  description     String
+  actor           String
+  actorDesignation String?
+  action          String
+  assetData       Json
+  
+  createdAt       DateTime  @default(now())
+
+  asset           Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, version])
+  @@index([assetId])
+}
+
+// ============================================
+// RISK MANAGEMENT
+// ============================================
+
+enum RiskStatus {
+  IDENTIFIED
+  ANALYZING
+  TREATING
+  MONITORING
+  CLOSED
+}
+
+enum RiskTreatmentType {
+  ACCEPT
+  MITIGATE
+  TRANSFER
+  AVOID
+  PENDING
+}
+
+enum ApprovalStatus {
+  DRAFT
+  PENDING_FIRST_APPROVAL
+  PENDING_SECOND_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+enum RiskProbability {
+  RARE
+  UNLIKELY
+  POSSIBLE
+  LIKELY
+  ALMOST_CERTAIN
+}
+
+enum RiskImpactLevel {
+  INSIGNIFICANT
+  MINOR
+  MODERATE
+  MAJOR
+  CATASTROPHIC
+}
+
+model Risk {
+  id              String        @id @default(uuid())
+  organizationId  String
+  riskId          String        // Human-readable ID like "R.1", "R.2"
+  title           String
+  description     String?
+  category        String?
+  
+  // Version control
+  version         Float         @default(0.1)
+  approvalStatus  ApprovalStatus @default(DRAFT)
+  
+  // Enhanced risk scoring (numeric for calculation)
+  likelihood      Int           @default(3) // 1-5 (Probability)
+  impact          Int           @default(3) // 1-5 (Impact)
+  inherentRisk    Int?                      // Calculated: likelihood * impact
+  
+  residualProbability  Int?     // 1-5 (After treatment)
+  residualImpact       Int?     // 1-5 (After treatment)
+  residualRisk         Int?     // Calculated: residualProbability * residualImpact
+  
+  // Control details
+  controlDescription String?
+  controlsReference  String?    // Reference to control IDs
+  
+  // Treatment
+  treatment       RiskTreatmentType @default(PENDING)
+  treatmentPlan   String?
+  treatmentDueDate DateTime?
+  treatmentImplementationDate DateTime?
+  
+  status          RiskStatus    @default(IDENTIFIED)
+  ownerId         String?
+  createdById     String
+  
+  // Review tracking
+  reviewedAt      DateTime?
+  comments        String?
+  
+  // CIA impact flags
+  affectsConfidentiality Boolean @default(false)
+  affectsIntegrity       Boolean @default(false)
+  affectsAvailability    Boolean @default(false)
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner           User?             @relation("RiskOwner", fields: [ownerId], references: [id])
+  createdBy       User              @relation("RiskCreatedBy", fields: [createdById], references: [id])
+  assets          RiskAsset[]
+  controls        RiskControl[]
+  soaEntries      SoAEntry[]
+  versions        RiskVersion[]
+  treatments      RiskTreatment[]
+  retirement      RiskRetirement?
+
+  @@unique([organizationId, riskId])
+  @@index([organizationId])
+  @@index([status])
+  @@index([approvalStatus])
+}
+
+model RiskAsset {
+  id        String   @id @default(uuid())
+  riskId    String
+  assetId   String
+  
+  createdAt DateTime @default(now())
+
+  risk      Risk     @relation(fields: [riskId], references: [id], onDelete: Cascade)
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([riskId, assetId])
+}
+
+// ============================================
+// RISK VERSION HISTORY
+// ============================================
+
+model RiskVersion {
+  id                String    @id @default(uuid())
+  riskId            String
+  version           Float
+  
+  // Change tracking
+  changeDescription String
+  actor             String    // User who made the change
+  actorDesignation  String?   // Role/designation of actor
+  action            String    // e.g., "Draft & Review", "1st Level Approval", "2nd Level Approval"
+  designation       String?   // For backward compatibility
+  
+  // Snapshot of risk data at this version
+  riskData          Json      // Complete risk object at this version
+  
+  createdById       String?
+  approvedById      String?
+  
+  createdAt         DateTime  @default(now())
+
+  risk              Risk      @relation(fields: [riskId], references: [id], onDelete: Cascade)
+
+  @@unique([riskId, version])
+  @@index([riskId])
+}
+
+// ============================================
+// RISK TREATMENT TRACKING
+// ============================================
+
+model RiskTreatment {
+  id                        String    @id @default(uuid())
+  riskId                    String
+  
+  residualProbability       Int       // 1-5
+  residualImpact            Int       // 1-5
+  residualRisk              Int       // residualProbability * residualImpact
+  riskResponse              String    // Mitigate, Accept, Transfer, Avoid
+  controlDescription        String?
+  controlImplementationDate DateTime?
+  treatmentTimeInDays       Int?      // Days taken for treatment
+  comments                  String?
+  
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  risk                      Risk      @relation(fields: [riskId], references: [id], onDelete: Cascade)
+
+  @@index([riskId])
+}
+
+// ============================================
+// RISK RETIREMENT
+// ============================================
+
+model RiskRetirement {
+  id          String    @id @default(uuid())
+  riskId      String    @unique
+  reason      String
+  retiredById String
+  retiredAt   DateTime  @default(now())
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  risk        Risk      @relation(fields: [riskId], references: [id], onDelete: Cascade)
+  retiredBy   User      @relation("RiskRetiredBy", fields: [retiredById], references: [id])
+
+  @@index([riskId])
+  @@index([retiredById])
+}
+
+// ============================================
+// CONTROL MANAGEMENT (ISO 27001 Annex A)
+// ============================================
+
+enum ControlCategory {
+  A5_ORGANIZATIONAL   // A.5 Organizational controls
+  A6_PEOPLE          // A.6 People controls
+  A7_PHYSICAL        // A.7 Physical controls
+  A8_TECHNOLOGICAL   // A.8 Technological controls
+}
+
+enum ImplementationStatus {
+  NOT_IMPLEMENTED
+  PARTIALLY_IMPLEMENTED
+  FULLY_IMPLEMENTED
+  NOT_APPLICABLE
+}
+
+model Control {
+  id                  String               @id @default(uuid())
+  organizationId      String
+  controlId           String               // ISO control ID like "A.5.1"
+  name                String
+  description         String?
+  objective           String?
+  category            ControlCategory
+  
+  // Version control
+  version             Float                @default(0.1)
+  approvalStatus      ApprovalStatus       @default(DRAFT)
+  
+  // Implementation tracking
+  implementationStatus ImplementationStatus @default(NOT_IMPLEMENTED)
+  implementationPercent Int                 @default(0) // 0-100
+  implementationNotes  String?
+  implementationDate   DateTime?
+  dueDate             DateTime?
+  
+  // Maturity scoring (0-5)
+  maturity            Int                  @default(0)
+  maturityComment     String?
+  
+  // Effectiveness (CIA impact reduction)
+  effectivenessConfidentiality Int @default(0)
+  effectivenessIntegrity       Int @default(0)
+  effectivenessAvailability    Int @default(0)
+  effectivenessProbability     Int @default(0)
+  
+  // Standard reference (for custom controls)
+  isCustom            Boolean              @default(false)
+  standardRef         String?              // e.g., "ISO 27001:2022"
+  
+  assigneeId          String?
+  createdById         String
+  
+  // Retirement
+  isRetired           Boolean              @default(false)
+  retirementDate      DateTime?
+  retirementReason    String?
+  
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  // Relations
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignee            User?                @relation("ControlAssignee", fields: [assigneeId], references: [id])
+  createdBy           User                 @relation("ControlCreatedBy", fields: [createdById], references: [id])
+  assets              ControlAsset[]
+  risks               RiskControl[]
+  evidence            FileUpload[]
+  soaEntries          SoAEntry[]
+  versions            ControlVersion[]
+
+  @@unique([organizationId, controlId])
+  @@index([organizationId])
+  @@index([category])
+  @@index([implementationStatus])
+}
+
+model ControlVersion {
+  id              String    @id @default(uuid())
+  controlId       String
+  version         Float
+  
+  description     String
+  actor           String
+  actorDesignation String?
+  action          String
+  controlData     Json
+  
+  createdAt       DateTime  @default(now())
+
+  control         Control   @relation(fields: [controlId], references: [id], onDelete: Cascade)
+
+  @@unique([controlId, version])
+  @@index([controlId])
+}
+
+model ControlAsset {
+  id        String   @id @default(uuid())
+  controlId String
+  assetId   String
+  
+  createdAt DateTime @default(now())
+
+  control   Control  @relation(fields: [controlId], references: [id], onDelete: Cascade)
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([controlId, assetId])
+}
+
+model RiskControl {
+  id        String   @id @default(uuid())
+  riskId    String
+  controlId String
+  
+  createdAt DateTime @default(now())
+
+  risk      Risk     @relation(fields: [riskId], references: [id], onDelete: Cascade)
+  control   Control  @relation(fields: [controlId], references: [id], onDelete: Cascade)
+
+  @@unique([riskId, controlId])
+}
+
+// ============================================
+// STATEMENT OF APPLICABILITY (SoA)
+// ============================================
+
+enum SoAStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  IMPLEMENTED
+  NOT_APPLICABLE
+}
+
+model SoAEntry {
+  id                      String         @id @default(uuid())
+  organizationId          String
+  controlId               String
+  riskId                  String?
+
+  isApplicable            Boolean        @default(true)
+  justification           String?
+  exclusionReason         String?        // If not applicable
+
+  // Fields from SoA HTML structure
+  status                  SoAStatus      @default(NOT_STARTED)
+  controlOwner            String?        // e.g., "CISO", "Head of TechOps"
+  documentationReferences String?        // Policy/procedure references
+  comments                String?
+  controlSource           String         @default("Annex A ISO 27001:2022")
+
+  // Version control (mirrors Risk pattern)
+  version                 Float          @default(0.1)
+  approvalStatus          ApprovalStatus @default(DRAFT)
+
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+
+  // Relations
+  organization            Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  control                 Control        @relation(fields: [controlId], references: [id], onDelete: Cascade)
+  risk                    Risk?          @relation(fields: [riskId], references: [id], onDelete: SetNull)
+  versions                SoAVersion[]
+
+  @@unique([organizationId, controlId])
+  @@index([organizationId])
+  @@index([approvalStatus])
+}
+
+// ============================================
+// SOA VERSION HISTORY
+// ============================================
+
+model SoAVersion {
+  id                String    @id @default(uuid())
+  soaEntryId        String
+  version           Float
+
+  changeDescription String
+  actor             String
+  actorDesignation  String?
+  action            String    // "Draft & Review", "1st Level Approval", "2nd Level Approval", "Updation"
+
+  soaData           Json      // Complete SoA entry snapshot at this version
+
+  createdById       String?
+  approvedById      String?
+
+  createdAt         DateTime  @default(now())
+
+  soaEntry          SoAEntry  @relation(fields: [soaEntryId], references: [id], onDelete: Cascade)
+
+  @@unique([soaEntryId, version])
+  @@index([soaEntryId])
+}
+
+// ============================================
+// GOOGLE DRIVE DOCUMENT INDEX
+// ============================================
+
+model DriveFolder {
+  id              String   @id @default(uuid())
+  organizationId  String
+  driveId         String   // Google Drive folder ID
+  name            String
+  folderType      String   @default("DOCUMENTS") // POLICIES, PROCEDURES, DOCUMENTS
+  parentDriveId   String?  // Parent Google Drive folder ID for nesting
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  documents       DriveDocument[]
+
+  @@unique([organizationId, driveId])
+  @@index([organizationId])
+}
+
+model DriveDocument {
+  id              String   @id @default(uuid())
+  organizationId  String
+  folderId        String?
+  driveFileId     String   // Google Drive file ID
+  name            String
+  mimeType        String
+  size            Int?
+  webViewLink     String?
+  webContentLink  String?
+
+  // Sync metadata
+  driveModifiedAt DateTime?
+  lastSyncedAt    DateTime?
+  syncStatus      String   @default("PENDING") // PENDING, SYNCED, ERROR
+
+  // RAG processing
+  isIndexed       Boolean  @default(false)
+  indexedAt        DateTime?
+  chunkCount      Int      @default(0)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  folder          DriveFolder?   @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  chunks          DocumentChunk[]
+
+  @@unique([organizationId, driveFileId])
+  @@index([organizationId])
+  @@index([driveFileId])
+  @@index([syncStatus])
+}
+
+// ============================================
+// RAG - DOCUMENT CHUNKS & EMBEDDINGS
+// ============================================
+
+model DocumentChunk {
+  id              String   @id @default(uuid())
+  documentId      String
+  chunkIndex      Int      // Order within document
+  content         String   // The text content of this chunk
+  metadata        Json?    // Page number, section title, etc.
+  tokenCount      Int?
+
+  // pgvector embedding (1536 dimensions for OpenAI text-embedding-3-small)
+  embedding       Unsupported("vector(1536)")?
+
+  createdAt       DateTime @default(now())
+
+  document        DriveDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, chunkIndex])
+  @@index([documentId])
+}
+
+// ============================================
+// AUDIT & INCIDENT MANAGEMENT
+// ============================================
+
+enum AuditStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Audit {
+  id              String      @id @default(uuid())
+  organizationId  String
+  title           String
+  description     String?
+  auditType       String?     // Internal, External, Certification
+  
+  startDate       DateTime?
+  endDate         DateTime?
+  status          AuditStatus @default(PLANNED)
+  
+  findings        String?
+  recommendations String?
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  files           FileUpload[]
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  REPORTED
+  INVESTIGATING
+  CONTAINED
+  RESOLVED
+  CLOSED
+}
+
+model Incident {
+  id              String           @id @default(uuid())
+  organizationId  String
+  incidentId      String           // Human-readable ID
+  title           String
+  description     String?
+  
+  // Version control
+  version         Float            @default(0.1)
+  approvalStatus  ApprovalStatus   @default(DRAFT)
+  
+  severity        IncidentSeverity @default(MEDIUM)
+  status          IncidentStatus   @default(REPORTED)
+  
+  reportedAt      DateTime         @default(now())
+  detectedAt      DateTime?
+  containedAt     DateTime?
+  resolvedAt      DateTime?
+  
+  rootCause       String?
+  lessonsLearned  String?
+  
+  createdById     String
+  assigneeId      String?
+  
+  // Retirement
+  isRetired       Boolean          @default(false)
+  retirementDate  DateTime?
+  retirementReason String?
+  
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relations
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy       User             @relation("IncidentCreatedBy", fields: [createdById], references: [id])
+  assignee        User?            @relation("IncidentAssignee", fields: [assigneeId], references: [id])
+  assets          IncidentAsset[]
+  files           FileUpload[]
+  versions        IncidentVersion[]
+
+  @@unique([organizationId, incidentId])
+  @@index([organizationId])
+  @@index([severity])
+  @@index([status])
+}
+
+model IncidentVersion {
+  id              String    @id @default(uuid())
+  incidentId      String
+  version         Float
+  
+  description     String
+  actor           String
+  actorDesignation String?
+  action          String
+  incidentData    Json
+  
+  createdAt       DateTime  @default(now())
+
+  incident        Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@unique([incidentId, version])
+  @@index([incidentId])
+}
+
+model IncidentAsset {
+  id         String   @id @default(uuid())
+  incidentId String
+  assetId    String
+  
+  createdAt  DateTime @default(now())
+
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  asset      Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([incidentId, assetId])
+}
+
+// ============================================
+// FILE STORAGE
+// ============================================
+
+enum StorageProvider {
+  MINIO
+  GOOGLE_DRIVE
+  LOCAL
+}
+
+enum FileCategory {
+  EVIDENCE
+  POLICY_ATTACHMENT
+  ASSET_DOCUMENT
+  AUDIT_REPORT
+  INCIDENT_EVIDENCE
+  OTHER
+}
+
+model FileUpload {
+  id              String          @id @default(uuid())
+  organizationId  String
+  
+  fileName        String
+  originalName    String
+  mimeType        String
+  size            Int             // bytes
+  
+  storageProvider StorageProvider @default(MINIO)
+  storagePath     String          // S3 key or Google Drive file ID
+  storageUrl      String?         // Public URL if available
+  
+  category        FileCategory    @default(OTHER)
+  description     String?
+  
+  uploadedById    String
+  
+  // Optional relations to entities
+  assetId         String?
+  controlId       String?
+  auditId         String?
+  incidentId      String?
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relations
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploadedBy      User            @relation(fields: [uploadedById], references: [id])
+  asset           Asset?          @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  control         Control?        @relation(fields: [controlId], references: [id], onDelete: SetNull)
+  audit           Audit?          @relation(fields: [auditId], references: [id], onDelete: SetNull)
+  incident        Incident?       @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([category])
+  @@index([uploadedById])
+}
+
+// ============================================
+// AUDIT LOG
+// ============================================
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  EXPORT
+  IMPORT
+  APPROVE
+  REJECT
+}
+
+model AuditLog {
+  id             String      @id @default(uuid())
+  userId         String?
+  organizationId String?
+  
+  action         AuditAction
+  entityType     String      // e.g., "Asset", "Risk", "Policy"
+  entityId       String?
+  
+  oldValues      Json?
+  newValues      Json?
+  
+  ipAddress      String?
+  userAgent      String?
+  
+  createdAt      DateTime    @default(now())
+
+  // Relations
+  user           User?       @relation("AuditLogUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
