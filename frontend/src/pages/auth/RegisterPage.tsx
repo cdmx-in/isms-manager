@@ -59,7 +59,7 @@ export function RegisterPage() {
       })
       toast({
         title: 'Account created!',
-        description: 'Welcome to ISMS Manager. Your organization has been set up.',
+        description: 'Welcome to Compliance Manager. Your organization has been set up.',
       })
       navigate('/dashboard')
     } catch (error: any) {
@@ -80,7 +80,7 @@ export function RegisterPage() {
         <div className="flex justify-center mb-8">
           <Link to="/" className="flex items-center gap-2">
             <Shield className="h-12 w-12 text-primary" />
-            <span className="text-2xl font-bold">ISMS Manager</span>
+            <span className="text-2xl font-bold">Compliance Manager</span>
           </Link>
         </div>
 

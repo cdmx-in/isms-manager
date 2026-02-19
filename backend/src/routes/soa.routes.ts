@@ -86,6 +86,7 @@ router.get(
       applicable,
       status,
       approvalStatus,
+      frameworkSlug,
       search,
       sortBy = 'controlId',
       sortOrder = 'asc',
@@ -114,6 +115,14 @@ router.get(
     }
     if (approvalStatus) {
       where.approvalStatus = approvalStatus;
+    }
+
+    // Filter by framework slug if provided
+    if (frameworkSlug) {
+      where.control = {
+        ...where.control,
+        framework: { slug: frameworkSlug as string },
+      };
     }
 
     // Search by control name or ID

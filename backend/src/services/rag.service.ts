@@ -298,11 +298,11 @@ export const answerQuestion = async (
     messages: [
       {
         role: 'system',
-        content: 'You are an ISMS policy expert. Answer questions based on the provided policy document excerpts. Cite sources using [Source N] notation. Be concise and accurate.',
+        content: 'You are a compliance policy expert. Answer questions based on the provided policy document excerpts. Cite sources using [Source N] notation. Be concise and accurate.',
       },
       {
         role: 'user',
-        content: `Based on these ISMS policy excerpts, answer:\n\n**Question:** ${question}\n\n**Excerpts:**\n${context}`,
+        content: `Based on these compliance policy excerpts, answer:\n\n**Question:** ${question}\n\n**Excerpts:**\n${context}`,
       },
     ],
     temperature: 0.2,

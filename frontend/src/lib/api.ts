@@ -110,7 +110,7 @@ export const riskApi = {
 }
 
 export const controlApi = {
-  list: (params: { organizationId: string; page?: number; limit?: number; category?: string }) =>
+  list: (params: { organizationId: string; page?: number; limit?: number; category?: string; frameworkSlug?: string }) =>
     axiosInstance.get('/controls', { params }),
   get: (id: string) => axiosInstance.get(`/controls/${id}`),
   create: (data: any) => axiosInstance.post('/controls', data),
@@ -233,6 +233,24 @@ export const reportApi = {
     axiosInstance.get('/reports/compliance', { params: { organizationId, format }, responseType: format === 'pdf' ? 'blob' : 'json' }),
 }
 
+export const frameworkApi = {
+  list: (organizationId?: string) => axiosInstance.get('/frameworks', { params: organizationId ? { organizationId } : {} }),
+  get: (slug: string) => axiosInstance.get(`/frameworks/${slug}`),
+  getProgress: (slug: string, organizationId: string) =>
+    axiosInstance.get(`/frameworks/${slug}/progress`, { params: { organizationId } }),
+}
+
+export const checklistApi = {
+  getForControl: (controlId: string, organizationId: string) =>
+    axiosInstance.get(`/checklist/controls/${controlId}/checklist`, { params: { organizationId } }),
+  initialize: (controlId: string, organizationId: string) =>
+    axiosInstance.post(`/checklist/controls/${controlId}/checklist/initialize`, { organizationId }),
+  updateItem: (itemId: string, data: { isCompleted?: boolean; notes?: string }) =>
+    axiosInstance.patch(`/checklist/${itemId}`, data),
+  getFrameworkProgress: (slug: string, organizationId: string) =>
+    axiosInstance.get(`/checklist/frameworks/${slug}/checklist-progress`, { params: { organizationId } }),
+}
+
 export const userApi = {
   updateProfile: (data: any) => axiosInstance.patch('/users/profile', data),
   changePassword: (data: { currentPassword: string; newPassword: string }) =>
@@ -308,7 +326,7 @@ export const api = {
     },
   },
   controls: {
-    list: async (organizationId: string, params?: { search?: string; category?: string; status?: string }) => {
+    list: async (organizationId: string, params?: { search?: string; category?: string; status?: string; frameworkSlug?: string; limit?: number }) => {
       const response = await controlApi.list({ organizationId, ...params })
       return response.data?.data || []
     },
@@ -318,6 +336,38 @@ export const api = {
     },
     update: async (id: string, data: any) => {
       const response = await controlApi.update(id, data)
+      return response.data?.data
+    },
+  },
+  frameworks: {
+    list: async (organizationId?: string) => {
+      const response = await frameworkApi.list(organizationId)
+      return response.data?.data || []
+    },
+    get: async (slug: string) => {
+      const response = await frameworkApi.get(slug)
+      return response.data?.data
+    },
+    getProgress: async (slug: string, organizationId: string) => {
+      const response = await frameworkApi.getProgress(slug, organizationId)
+      return response.data?.data
+    },
+  },
+  checklist: {
+    getForControl: async (controlId: string, organizationId: string) => {
+      const response = await checklistApi.getForControl(controlId, organizationId)
+      return response.data?.data || []
+    },
+    initialize: async (controlId: string, organizationId: string) => {
+      const response = await checklistApi.initialize(controlId, organizationId)
+      return response.data?.data || []
+    },
+    updateItem: async (itemId: string, data: { isCompleted?: boolean; notes?: string }) => {
+      const response = await checklistApi.updateItem(itemId, data)
+      return response.data?.data
+    },
+    getFrameworkProgress: async (slug: string, organizationId: string) => {
+      const response = await checklistApi.getFrameworkProgress(slug, organizationId)
       return response.data?.data
     },
   },

@@ -22,6 +22,7 @@ router.get(
       organizationId,
       category,
       implementationStatus,
+      frameworkSlug,
       search,
       sortBy = 'controlId',
       sortOrder = 'asc',
@@ -42,6 +43,12 @@ router.get(
     const where: any = { organizationId };
     if (category) where.category = category;
     if (implementationStatus) where.implementationStatus = implementationStatus;
+
+    // Filter by framework slug if provided
+    if (frameworkSlug) {
+      where.framework = { slug: frameworkSlug as string };
+    }
+
     if (search) {
       where.OR = [
         { controlId: { contains: search as string, mode: 'insensitive' } },

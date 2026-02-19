@@ -15,7 +15,7 @@ export function LoginPage() {
         <div className="flex justify-center mb-8">
           <Link to="/" className="flex items-center gap-2">
             <Shield className="h-12 w-12 text-primary" />
-            <span className="text-2xl font-bold">ISMS Manager</span>
+            <span className="text-2xl font-bold">Compliance Manager</span>
           </Link>
         </div>
 
@@ -23,7 +23,7 @@ export function LoginPage() {
           <CardHeader className="space-y-1">
             <CardTitle className="text-2xl text-center">Sign in</CardTitle>
             <CardDescription className="text-center">
-              Use your Google account to access ISMS Manager
+              Use your Google account to access Compliance Manager
             </CardDescription>
           </CardHeader>
           <CardContent>

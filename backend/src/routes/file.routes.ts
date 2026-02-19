@@ -12,6 +12,20 @@ import crypto from 'crypto';
 
 const router = Router();
 
+// Map entityType to valid FileCategory enum values
+const ENTITY_TYPE_TO_CATEGORY: Record<string, string> = {
+  control: 'EVIDENCE',
+  asset: 'ASSET_DOCUMENT',
+  incident: 'INCIDENT_EVIDENCE',
+  policy: 'POLICY_ATTACHMENT',
+  audit: 'AUDIT_REPORT',
+};
+
+function resolveFileCategory(entityType?: string): string {
+  if (!entityType) return 'OTHER';
+  return ENTITY_TYPE_TO_CATEGORY[entityType.toLowerCase()] || 'OTHER';
+}
+
 // Configure multer
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -79,7 +93,7 @@ router.post(
     const fileRecord = await storageService.uploadFile(req.file, {
       organizationId,
       userId: authReq.user.id,
-      category: (entityType?.toUpperCase() as any) || 'OTHER',
+      category: resolveFileCategory(entityType) as any,
       description,
       ...(entityType === 'asset' && entityId ? { assetId: entityId } : {}),
       ...(entityType === 'control' && entityId ? { controlId: entityId } : {}),
@@ -136,7 +150,7 @@ router.post(
       const fileRecord = await storageService.uploadFile(file, {
         organizationId,
         userId: authReq.user.id,
-        category: (entityType?.toUpperCase() as any) || 'OTHER',
+        category: resolveFileCategory(entityType as string) as any,
         ...(entityType === 'asset' && entityId ? { assetId: entityId } : {}),
         ...(entityType === 'control' && entityId ? { controlId: entityId } : {}),
         ...(entityType === 'incident' && entityId ? { incidentId: entityId } : {}),

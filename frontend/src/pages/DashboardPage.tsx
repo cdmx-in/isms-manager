@@ -26,6 +26,8 @@ import {
   Server,
   AlertTriangle,
   Shield,
+  Brain,
+  Lock,
   FileText,
   CheckCircle2,
   Clock,
@@ -37,6 +39,12 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+
+const frameworkIcons: Record<string, React.ElementType> = {
+  Shield: Shield,
+  Brain: Brain,
+  Lock: Lock,
+}
 
 const COLORS = ['#22c55e', '#3b82f6', '#eab308', '#f97316', '#ef4444']
 
@@ -52,6 +60,12 @@ export function DashboardPage() {
   const { data: complianceData } = useQuery({
     queryKey: ['compliance-overview', currentOrganizationId],
     queryFn: () => api.dashboard.getComplianceOverview(currentOrganizationId!),
+    enabled: !!currentOrganizationId,
+  })
+
+  const { data: frameworks } = useQuery({
+    queryKey: ['frameworks', currentOrganizationId],
+    queryFn: () => api.frameworks.list(currentOrganizationId),
     enabled: !!currentOrganizationId,
   })
 
@@ -85,7 +99,7 @@ export function DashboardPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-muted-foreground">
-            Overview of your information security management system
+            Overview of your compliance management system
           </p>
         </div>
         <div className="flex gap-2">
@@ -145,7 +159,7 @@ export function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">ISMS Documents</CardTitle>
+            <CardTitle className="text-sm font-medium">Compliance Documents</CardTitle>
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -157,58 +171,55 @@ export function DashboardPage() {
         </Card>
       </div>
 
-      {/* Compliance Progress */}
+      {/* Multi-Framework Compliance Progress */}
       <Card>
         <CardHeader>
-          <CardTitle>ISO 27001:2022 Compliance Progress</CardTitle>
+          <CardTitle>Compliance Framework Progress</CardTitle>
           <CardDescription>
-            Statement of Applicability completion status by control category
+            Implementation progress across all active compliance frameworks
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {complianceData?.categories?.map((category: any) => (
-              <div key={category.name} className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium">{category.name}</span>
-                  <span className="text-muted-foreground">
-                    {category.implemented}/{category.total} ({category.percentage}%)
-                  </span>
-                </div>
-                <Progress value={category.percentage} className="h-2" />
-              </div>
-            )) || (
-              <>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium">A.5 Organizational Controls</span>
-                    <span className="text-muted-foreground">28/37 (76%)</span>
+          <div className="space-y-6">
+            {(frameworks?.length ? frameworks : [
+              { slug: 'iso27001', shortName: 'ISO 27001', name: 'ISO/IEC 27001:2022', icon: 'Shield', color: '#3b82f6', progress: { progressPercent: 0 }, controlCount: 93 },
+              { slug: 'iso42001', shortName: 'ISO 42001', name: 'ISO/IEC 42001:2023', icon: 'Brain', color: '#8b5cf6', progress: { progressPercent: 0 }, controlCount: 39 },
+              { slug: 'dpdpa', shortName: 'DPDPA', name: 'DPDPA 2023', icon: 'Lock', color: '#f59e0b', progress: { progressPercent: 0 }, controlCount: 30 },
+            ]).map((fw: any) => {
+              const IconComponent = frameworkIcons[fw.icon] || Shield
+              const progressPercent = typeof fw.progress === 'object' ? (fw.progress?.progressPercent || 0) : (fw.progress || 0)
+              return (
+                <Link
+                  key={fw.slug}
+                  to={`/frameworks/${fw.slug}`}
+                  className="block group"
+                >
+                  <div className="flex items-center gap-4 p-3 rounded-lg border transition-colors group-hover:bg-accent">
+                    <div
+                      className="rounded-lg p-2 flex-shrink-0"
+                      style={{ backgroundColor: `${fw.color}20` }}
+                    >
+                      <IconComponent
+                        className="h-5 w-5"
+                        style={{ color: fw.color }}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-medium text-sm">{fw.shortName}</span>
+                        <span className="text-sm text-muted-foreground">
+                          {progressPercent}% complete
+                        </span>
+                      </div>
+                      <Progress value={progressPercent} className="h-2" />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {fw.controlCount || 0} controls
+                      </p>
+                    </div>
                   </div>
-                  <Progress value={76} className="h-2" />
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium">A.6 People Controls</span>
-                    <span className="text-muted-foreground">6/8 (75%)</span>
-                  </div>
-                  <Progress value={75} className="h-2" />
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium">A.7 Physical Controls</span>
-                    <span className="text-muted-foreground">11/14 (79%)</span>
-                  </div>
-                  <Progress value={79} className="h-2" />
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium">A.8 Technological Controls</span>
-                    <span className="text-muted-foreground">26/34 (76%)</span>
-                  </div>
-                  <Progress value={76} className="h-2" />
-                </div>
-              </>
-            )}
+                </Link>
+              )
+            })}
           </div>
         </CardContent>
       </Card>

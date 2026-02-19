@@ -470,7 +470,7 @@ export function SettingsPage() {
                   Google Drive Integration
                 </CardTitle>
                 <CardDescription>
-                  Configure Google Drive folders to sync ISMS policies and procedures.
+                  Configure Google Drive folders to sync compliance policies and procedures.
                   {!driveConfigured && (
                     <span className="block mt-1 text-yellow-600">
                       Google Drive service account is not configured. Add the service account key file to enable this feature.
@@ -528,7 +528,7 @@ export function SettingsPage() {
                       <div className="grid gap-1">
                         <Label className="text-xs text-muted-foreground">Folder Name</Label>
                         <Input
-                          placeholder="e.g., ISMS Policies"
+                          placeholder="e.g., Compliance Policies"
                           value={newFolder.name}
                           onChange={(e) => setNewFolder({ ...newFolder, name: e.target.value })}
                         />

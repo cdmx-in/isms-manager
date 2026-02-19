@@ -212,7 +212,7 @@ export function PoliciesPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Policies & Procedures</h1>
           <p className="text-muted-foreground">
-            ISMS documents from Google Drive with AI-powered knowledge base
+            Compliance documents from Google Drive with AI-powered knowledge base
           </p>
         </div>
         <div className="flex gap-2">
@@ -646,7 +646,7 @@ export function PoliciesPage() {
                 AI Knowledge Base
               </CardTitle>
               <CardDescription>
-                Search or ask questions across all indexed ISMS policy documents
+                Search or ask questions across all indexed compliance policy documents
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -677,7 +677,7 @@ export function PoliciesPage() {
                   <Input
                     placeholder={
                       ragMode === 'ask'
-                        ? 'Ask a question about ISMS policies...'
+                        ? 'Ask a question about compliance policies...'
                         : 'Search for relevant policy content...'
                     }
                     value={ragQuery}
@@ -790,7 +790,7 @@ export function PoliciesPage() {
                   <Brain className="mx-auto h-10 w-10 text-muted-foreground/40" />
                   <p className="mt-3 text-sm text-muted-foreground">
                     {ragStatus?.indexedDocuments
-                      ? 'Ask a question or search across your indexed ISMS documents.'
+                      ? 'Ask a question or search across your indexed compliance documents.'
                       : 'No documents indexed yet. Sync your Drive folders and index them first.'}
                   </p>
                 </div>

@@ -32,8 +32,11 @@ import incidentRoutes from './routes/incident.routes.js';
 import fileRoutes from './routes/file.routes.js';
 import reportRoutes from './routes/report.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
+import frameworkRoutes from './routes/framework.routes.js';
+import checklistRoutes from './routes/checklist.routes.js';
 
 import { logger } from './utils/logger.js';
+import { initMinIO } from './services/storage.service.js';
 
 // Initialize Prisma
 export const prisma = new PrismaClient({
@@ -197,6 +200,8 @@ app.use('/api/incidents', incidentRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/frameworks', frameworkRoutes);
+app.use('/api/checklist', checklistRoutes);
 
 // ============================================
 // ERROR HANDLING
@@ -223,6 +228,14 @@ const startServer = async () => {
     // Initialize session with Redis
     await initializeSession();
     logger.info('Redis session store initialized');
+
+    // Initialize MinIO storage
+    try {
+      await initMinIO();
+      logger.info('MinIO storage initialized');
+    } catch (error) {
+      logger.warn('MinIO initialization failed - file uploads may not work:', error);
+    }
 
     // Start server
     app.listen(PORT, () => {

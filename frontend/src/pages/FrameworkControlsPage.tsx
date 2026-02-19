@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth.store'
@@ -34,10 +35,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useToast } from '@/components/ui/use-toast'
-import { formatDate } from '@/lib/utils'
 import {
   Search,
   Shield,
+  Brain,
+  Lock,
   CheckCircle2,
   Clock,
   XCircle,
@@ -45,9 +47,23 @@ import {
   Loader2,
   Filter,
   ChevronRight,
-  ExternalLink,
+  ArrowLeft,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ControlChecklist } from '@/components/controls/ControlChecklist'
+import { EvidenceUpload } from '@/components/controls/EvidenceUpload'
+
+const frameworkIcons: Record<string, React.ElementType> = {
+  Shield: Shield,
+  Brain: Brain,
+  Lock: Lock,
+}
+
+const FRAMEWORK_INFO: Record<string, { shortName: string; name: string; icon: string; color: string }> = {
+  iso27001: { shortName: 'ISO 27001', name: 'ISO/IEC 27001:2022', icon: 'Shield', color: '#3b82f6' },
+  iso42001: { shortName: 'ISO 42001', name: 'ISO/IEC 42001:2023', icon: 'Brain', color: '#8b5cf6' },
+  dpdpa: { shortName: 'DPDPA', name: 'DPDPA 2023', icon: 'Lock', color: '#f59e0b' },
+}
 
 const implementationStatuses = [
   { value: 'IMPLEMENTED', label: 'Implemented', icon: CheckCircle2, color: 'text-green-500' },
@@ -57,14 +73,8 @@ const implementationStatuses = [
   { value: 'NOT_APPLICABLE', label: 'Not Applicable', icon: XCircle, color: 'text-gray-500' },
 ]
 
-const categories = [
-  { id: 'A.5', name: 'Organizational Controls', count: 37 },
-  { id: 'A.6', name: 'People Controls', count: 8 },
-  { id: 'A.7', name: 'Physical Controls', count: 14 },
-  { id: 'A.8', name: 'Technological Controls', count: 34 },
-]
-
-export function ControlsPage() {
+export function FrameworkControlsPage() {
+  const { slug } = useParams<{ slug: string }>()
   const { currentOrganizationId } = useAuthStore()
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -80,15 +90,23 @@ export function ControlsPage() {
     evidence: '',
   })
 
-  const { data: controls, isLoading } = useQuery({
-    queryKey: ['controls', currentOrganizationId, search, categoryFilter, statusFilter],
+  const { data: framework, isLoading: frameworkLoading } = useQuery({
+    queryKey: ['framework', slug],
+    queryFn: () => api.frameworks.get(slug!),
+    enabled: !!slug,
+  })
+
+  const { data: controls, isLoading: controlsLoading } = useQuery({
+    queryKey: ['controls', currentOrganizationId, slug, search, categoryFilter, statusFilter],
     queryFn: () =>
       api.controls.list(currentOrganizationId!, {
+        frameworkSlug: slug,
         search,
         category: categoryFilter || undefined,
         status: statusFilter || undefined,
+        limit: 500,
       }),
-    enabled: !!currentOrganizationId,
+    enabled: !!currentOrganizationId && !!slug,
   })
 
   const updateMutation = useMutation({
@@ -128,6 +146,20 @@ export function ControlsPage() {
     return implementationStatuses.find((s) => s.value === status) || implementationStatuses[3]
   }
 
+  // Derive unique categories from controls
+  const categories = controls?.reduce((acc: Array<{ id: string; name: string }>, control: any) => {
+    const prefix = control.controlId.split('.').slice(0, 2).join('.')
+    if (!acc.find((c) => c.id === prefix)) {
+      // Derive name from the category string
+      const categoryName = control.category
+        ?.replace(/_/g, ' ')
+        .replace(/^A\d+\s*/i, '')
+        .replace(/^\w/, (c: string) => c.toUpperCase()) || prefix
+      acc.push({ id: prefix, name: categoryName })
+    }
+    return acc
+  }, []) || []
+
   // Calculate category statistics
   const getCategoryStats = (categoryId: string) => {
     const categoryControls = controls?.filter((c: any) =>
@@ -140,61 +172,94 @@ export function ControlsPage() {
     return { implemented, total, percentage: total > 0 ? Math.round((implemented / total) * 100) : 0 }
   }
 
-  // Group controls by category
+  // Group controls by category prefix
   const groupedControls = controls?.reduce((acc: any, control: any) => {
-    const category = control.controlId.substring(0, 3)
-    if (!acc[category]) {
-      acc[category] = []
+    const prefix = control.controlId.split('.').slice(0, 2).join('.')
+    if (!acc[prefix]) {
+      acc[prefix] = []
     }
-    acc[category].push(control)
+    acc[prefix].push(control)
     return acc
   }, {}) || {}
+
+  const isLoading = frameworkLoading || controlsLoading
+  const fallbackInfo = FRAMEWORK_INFO[slug || '']
+  const displayShortName = framework?.shortName || fallbackInfo?.shortName || slug
+  const displayFullName = framework?.name || fallbackInfo?.name || ''
+  const displayColor = framework?.color || fallbackInfo?.color || '#3b82f6'
+  const displayIcon = framework?.icon || fallbackInfo?.icon || 'Shield'
+  const IconComponent = frameworkIcons[displayIcon] || Shield
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Controls</h1>
-          <p className="text-muted-foreground">
-            Manage and track implementation of compliance controls across all frameworks
-          </p>
+          <div className="flex items-center gap-2 mb-1">
+            <Button variant="ghost" size="sm" asChild>
+              <Link to="/frameworks">
+                <ArrowLeft className="mr-1 h-4 w-4" />
+                Frameworks
+              </Link>
+            </Button>
+          </div>
+          <div className="flex items-center gap-3">
+            <div
+              className="rounded-lg p-2"
+              style={{ backgroundColor: `${displayColor}20` }}
+            >
+              <IconComponent
+                className="h-6 w-6"
+                style={{ color: displayColor }}
+              />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">
+                {displayShortName} Controls
+              </h1>
+              <p className="text-muted-foreground">
+                {displayFullName || 'Loading framework...'}
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 
       {/* Category Overview Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {categories.map((category) => {
-          const stats = getCategoryStats(category.id)
-          return (
-            <Card
-              key={category.id}
-              className={cn(
-                'cursor-pointer transition-colors hover:bg-accent',
-                categoryFilter === category.id && 'border-primary'
-              )}
-              onClick={() =>
-                setCategoryFilter(categoryFilter === category.id ? '' : category.id)
-              }
-            >
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">
-                  {category.id} - {category.name}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-2xl font-bold">{stats.percentage}%</span>
-                  <span className="text-sm text-muted-foreground">
-                    {stats.implemented}/{stats.total}
-                  </span>
-                </div>
-                <Progress value={stats.percentage} className="h-2" />
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
+      {categories.length > 0 && (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {categories.map((category: any) => {
+            const stats = getCategoryStats(category.id)
+            return (
+              <Card
+                key={category.id}
+                className={cn(
+                  'cursor-pointer transition-colors hover:bg-accent',
+                  categoryFilter === category.id && 'border-primary'
+                )}
+                onClick={() =>
+                  setCategoryFilter(categoryFilter === category.id ? '' : category.id)
+                }
+              >
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium">
+                    {category.id} - {category.name}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-2xl font-bold">{stats.percentage}%</span>
+                    <span className="text-sm text-muted-foreground">
+                      {stats.implemented}/{stats.total}
+                    </span>
+                  </div>
+                  <Progress value={stats.percentage} className="h-2" />
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      )}
 
       {/* Filters */}
       <Card>
@@ -251,7 +316,7 @@ export function ControlsPage() {
               {Object.entries(groupedControls).map(([category, categoryControls]: [string, any]) => (
                 <div key={category}>
                   <h3 className="text-lg font-semibold mb-3">
-                    {category} - {categories.find((c) => c.id === category)?.name}
+                    {category} - {categories.find((c: any) => c.id === category)?.name}
                   </h3>
                   <Table>
                     <TableHeader>
@@ -299,6 +364,11 @@ export function ControlsPage() {
                   </Table>
                 </div>
               ))}
+              {Object.keys(groupedControls).length === 0 && (
+                <div className="text-center py-8 text-muted-foreground">
+                  No controls found for this framework.
+                </div>
+              )}
             </div>
           )}
         </CardContent>
@@ -306,7 +376,7 @@ export function ControlsPage() {
 
       {/* Control Detail Dialog */}
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-        <DialogContent className="sm:max-w-[700px]">
+        <DialogContent className="sm:max-w-[700px] max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Shield className="h-5 w-5" />
@@ -316,9 +386,10 @@ export function ControlsPage() {
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <Tabs defaultValue="implementation">
-              <TabsList className="grid w-full grid-cols-3">
+              <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="implementation">Implementation</TabsTrigger>
                 <TabsTrigger value="guidance">Guidance</TabsTrigger>
+                <TabsTrigger value="checklist">Checklist</TabsTrigger>
                 <TabsTrigger value="evidence">Evidence</TabsTrigger>
               </TabsList>
 
@@ -367,50 +438,28 @@ export function ControlsPage() {
                   <h4 className="font-medium mb-2">Control Objective</h4>
                   <p className="text-sm text-muted-foreground">
                     {selectedControl?.objective ||
-                      'To ensure information security is implemented and operated in accordance with the organizational policies and procedures.'}
+                      selectedControl?.description}
                   </p>
                 </div>
                 <div className="rounded-lg border p-4">
                   <h4 className="font-medium mb-2">Implementation Guidance</h4>
                   <p className="text-sm text-muted-foreground">
                     {selectedControl?.guidance ||
-                      'Organizations should establish appropriate controls to protect information assets. This includes defining responsibilities, implementing technical measures, and maintaining documentation of security activities.'}
+                      'Refer to the standard documentation for detailed implementation guidance on this control.'}
                   </p>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" asChild>
-                    <a
-                      href={`https://www.iso.org/standard/27001`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <ExternalLink className="mr-2 h-4 w-4" />
-                      ISO 27001 Reference
-                    </a>
-                  </Button>
                 </div>
               </TabsContent>
 
+              <TabsContent value="checklist" className="mt-4">
+                {selectedControl && (
+                  <ControlChecklist controlId={selectedControl.id} />
+                )}
+              </TabsContent>
+
               <TabsContent value="evidence" className="space-y-4 mt-4">
-                <div className="grid gap-2">
-                  <Label>Evidence & Documentation</Label>
-                  <Textarea
-                    value={formData.evidence}
-                    onChange={(e) =>
-                      setFormData({ ...formData, evidence: e.target.value })
-                    }
-                    placeholder="List documents, procedures, or other evidence demonstrating control implementation..."
-                    rows={4}
-                  />
-                </div>
-                <div className="rounded-lg border-2 border-dashed p-6 text-center">
-                  <p className="text-sm text-muted-foreground">
-                    Drag and drop files here, or click to upload evidence documents
-                  </p>
-                  <Button variant="outline" size="sm" className="mt-2">
-                    Upload Files
-                  </Button>
-                </div>
+                {selectedControl && (
+                  <EvidenceUpload controlId={selectedControl.id} entityType="control" />
+                )}
               </TabsContent>
             </Tabs>
           </div>

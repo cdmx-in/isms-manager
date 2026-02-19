@@ -12,15 +12,16 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
+  Layers,
 } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 
 const navItems = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { name: 'Frameworks', href: '/frameworks', icon: Layers },
   { name: 'Assets', href: '/assets', icon: Server },
   { name: 'Risks', href: '/risks', icon: AlertTriangle },
-  { name: 'Controls', href: '/controls', icon: Shield },
   { name: 'Policies', href: '/policies', icon: FileText },
   { name: 'Statement of Applicability', href: '/soa', icon: ClipboardCheck },
   { name: 'Incidents', href: '/incidents', icon: AlertCircle },
@@ -44,7 +45,7 @@ export function Sidebar() {
         {!collapsed && (
           <Link to="/dashboard" className="flex items-center gap-2">
             <Shield className="h-8 w-8 text-primary" />
-            <span className="text-lg font-bold">ISMS Manager</span>
+            <span className="text-lg font-bold">Compliance Manager</span>
           </Link>
         )}
         {collapsed && (
@@ -57,7 +58,7 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 space-y-1 p-2">
         {navItems.map((item) => {
-          const isActive = location.pathname === item.href
+          const isActive = location.pathname === item.href || location.pathname.startsWith(item.href + '/')
           return (
             <Link
               key={item.name}

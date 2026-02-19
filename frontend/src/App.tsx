@@ -6,7 +6,8 @@ import { LoginPage } from '@/pages/auth/LoginPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { AssetsPage } from '@/pages/AssetsPage'
 import RisksPageEnhanced from '@/pages/RisksPageEnhanced'
-import { ControlsPage } from '@/pages/ControlsPage'
+import { FrameworksPage } from '@/pages/FrameworksPage'
+import { FrameworkControlsPage } from '@/pages/FrameworkControlsPage'
 import { PoliciesPage } from '@/pages/PoliciesPage'
 import { SoAPage } from '@/pages/SoAPage'
 import { IncidentsPage } from '@/pages/IncidentsPage'
@@ -66,7 +67,9 @@ function App() {
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="assets" element={<AssetsPage />} />
           <Route path="risks" element={<RisksPageEnhanced />} />
-          <Route path="controls" element={<ControlsPage />} />
+          <Route path="controls" element={<Navigate to="/frameworks" replace />} />
+          <Route path="frameworks" element={<FrameworksPage />} />
+          <Route path="frameworks/:slug" element={<FrameworkControlsPage />} />
           <Route path="policies" element={<PoliciesPage />} />
           <Route path="soa" element={<SoAPage />} />
           <Route path="incidents" element={<IncidentsPage />} />

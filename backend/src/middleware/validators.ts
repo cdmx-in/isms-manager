@@ -6,7 +6,7 @@ export const uuidParam = (field: string = 'id') =>
 
 export const paginationQuery = [
   query('page').optional().isInt({ min: 1 }).toInt().withMessage('Page must be a positive integer'),
-  query('limit').optional().isInt({ min: 1, max: 100 }).toInt().withMessage('Limit must be between 1 and 100'),
+  query('limit').optional().isInt({ min: 1, max: 500 }).toInt().withMessage('Limit must be between 1 and 500'),
   query('sortBy').optional().isString().trim(),
   query('sortOrder').optional().isIn(['asc', 'desc']).withMessage('Sort order must be asc or desc'),
 ];

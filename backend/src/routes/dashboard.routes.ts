@@ -300,47 +300,138 @@ router.get(
       throw new AppError('You are not a member of this organization', 403);
     }
 
-    // Get SoA entries with their control info
+    // Get all active frameworks
+    const frameworks = await prisma.complianceFramework.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+
+    // Get SoA entries with their control and framework info
     const soaEntries = await prisma.soAEntry.findMany({
       where: { organizationId: organizationId as string },
       include: {
-        control: true,
+        control: {
+          include: {
+            framework: {
+              select: { id: true, slug: true, name: true, shortName: true },
+            },
+          },
+        },
       },
     });
 
-    // Group by control category (A.5, A.6, A.7, A.8)
-    const categories: { [key: string]: { total: number; applicable: number; implemented: number; categoryName: string } } = {
-      'A.5': { total: 0, applicable: 0, implemented: 0, categoryName: 'Organizational Controls' },
-      'A.6': { total: 0, applicable: 0, implemented: 0, categoryName: 'People Controls' },
-      'A.7': { total: 0, applicable: 0, implemented: 0, categoryName: 'Physical Controls' },
-      'A.8': { total: 0, applicable: 0, implemented: 0, categoryName: 'Technological Controls' },
-    };
+    // Group results by framework, then by category within each framework
+    const frameworkResults = frameworks.map(framework => {
+      const frameworkEntries = soaEntries.filter(
+        entry => entry.control.frameworkId === framework.id
+      );
 
-    soaEntries.forEach(entry => {
-      const controlId = entry.control.controlId;
-      const category = controlId.split('.').slice(0, 2).join('.');
-      
-      if (categories[category]) {
-        categories[category].total++;
+      // Build dynamic categories from actual data
+      const categoryMap: { [key: string]: { total: number; applicable: number; implemented: number } } = {};
+
+      frameworkEntries.forEach(entry => {
+        const controlId = entry.control.controlId;
+        const category = controlId.split('.').slice(0, 2).join('.');
+
+        if (!categoryMap[category]) {
+          categoryMap[category] = { total: 0, applicable: 0, implemented: 0 };
+        }
+
+        categoryMap[category].total++;
         if (entry.isApplicable) {
-          categories[category].applicable++;
+          categoryMap[category].applicable++;
           if (entry.control.implementationStatus === 'FULLY_IMPLEMENTED') {
-            categories[category].implemented++;
+            categoryMap[category].implemented++;
           }
         }
-      }
-    });
+      });
 
-    res.json({
-      success: true,
-      data: Object.entries(categories).map(([key, value]) => ({
+      const categories = Object.entries(categoryMap).map(([key, value]) => ({
         category: key,
-        name: value.categoryName,
         total: value.total,
         applicable: value.applicable,
         implemented: value.implemented,
         percentage: value.applicable > 0 ? Math.round((value.implemented / value.applicable) * 100) : 0,
-      })),
+      }));
+
+      const totalApplicable = frameworkEntries.filter(e => e.isApplicable).length;
+      const totalImplemented = frameworkEntries.filter(
+        e => e.isApplicable && e.control.implementationStatus === 'FULLY_IMPLEMENTED'
+      ).length;
+
+      return {
+        framework: {
+          id: framework.id,
+          slug: framework.slug,
+          name: framework.name,
+          shortName: framework.shortName,
+        },
+        summary: {
+          total: frameworkEntries.length,
+          applicable: totalApplicable,
+          implemented: totalImplemented,
+          percentage: totalApplicable > 0 ? Math.round((totalImplemented / totalApplicable) * 100) : 0,
+        },
+        categories,
+      };
+    });
+
+    // Also include entries without a framework (legacy/unlinked controls)
+    const unlinkedEntries = soaEntries.filter(entry => !entry.control.frameworkId);
+    if (unlinkedEntries.length > 0) {
+      const categoryMap: { [key: string]: { total: number; applicable: number; implemented: number } } = {};
+
+      unlinkedEntries.forEach(entry => {
+        const controlId = entry.control.controlId;
+        const category = controlId.split('.').slice(0, 2).join('.');
+
+        if (!categoryMap[category]) {
+          categoryMap[category] = { total: 0, applicable: 0, implemented: 0 };
+        }
+
+        categoryMap[category].total++;
+        if (entry.isApplicable) {
+          categoryMap[category].applicable++;
+          if (entry.control.implementationStatus === 'FULLY_IMPLEMENTED') {
+            categoryMap[category].implemented++;
+          }
+        }
+      });
+
+      frameworkResults.push({
+        framework: {
+          id: 'unlinked',
+          slug: 'unlinked',
+          name: 'Unlinked Controls',
+          shortName: 'Unlinked',
+        },
+        summary: {
+          total: unlinkedEntries.length,
+          applicable: unlinkedEntries.filter(e => e.isApplicable).length,
+          implemented: unlinkedEntries.filter(
+            e => e.isApplicable && e.control.implementationStatus === 'FULLY_IMPLEMENTED'
+          ).length,
+          percentage: (() => {
+            const applicable = unlinkedEntries.filter(e => e.isApplicable).length;
+            const implemented = unlinkedEntries.filter(
+              e => e.isApplicable && e.control.implementationStatus === 'FULLY_IMPLEMENTED'
+            ).length;
+            return applicable > 0 ? Math.round((implemented / applicable) * 100) : 0;
+          })(),
+        },
+        categories: Object.entries(categoryMap).map(([key, value]) => ({
+          category: key,
+          total: value.total,
+          applicable: value.applicable,
+          implemented: value.implemented,
+          percentage: value.applicable > 0 ? Math.round((value.implemented / value.applicable) * 100) : 0,
+        })),
+      });
+    }
+
+    res.json({
+      success: true,
+      data: frameworkResults,
     });
   })
 );
