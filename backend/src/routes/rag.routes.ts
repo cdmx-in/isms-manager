@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.js';
+import { authenticate, requirePermission, AuthenticatedRequest } from '../middleware/auth.js';
 import {
   indexDocument,
   indexAllDocuments,
@@ -70,15 +70,10 @@ const router = Router();
 router.post(
   '/index/:documentId',
   authenticate,
+  requirePermission('policies', 'edit'),
   asyncHandler(async (req, res) => {
     const authReq = req as AuthenticatedRequest;
     const { documentId } = req.params;
-
-    // Admin only
-    if (authReq.user.role !== 'ADMIN') {
-      const isOrgAdmin = authReq.user.organizationMemberships.some(m => m.role === 'ADMIN');
-      if (!isOrgAdmin) throw new AppError('Admin access required', 403);
-    }
 
     if (!process.env.OPENAI_API_KEY) {
       throw new AppError('OpenAI API key is not configured', 503);
@@ -99,20 +94,13 @@ router.post(
 router.post(
   '/index-all',
   authenticate,
+  requirePermission('policies', 'edit'),
   asyncHandler(async (req, res) => {
     const authReq = req as AuthenticatedRequest;
     const { organizationId } = req.body;
 
     if (!organizationId) {
       throw new AppError('organizationId is required', 400);
-    }
-
-    // Admin only
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership || (membership.role !== 'ADMIN' && authReq.user.role !== 'ADMIN')) {
-      throw new AppError('Admin access required', 403);
     }
 
     if (!process.env.OPENAI_API_KEY) {
@@ -138,6 +126,7 @@ router.post(
 router.get(
   '/search',
   authenticate,
+  requirePermission('policies', 'view'),
   asyncHandler(async (req, res) => {
     const { organizationId, q, limit, folderId } = req.query;
 
@@ -147,14 +136,6 @@ router.get(
 
     if (!process.env.OPENAI_API_KEY) {
       throw new AppError('OpenAI API key is not configured', 503);
-    }
-
-    const authReq = req as AuthenticatedRequest;
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const results = await semanticSearch(q as string, organizationId as string, {
@@ -170,8 +151,8 @@ router.get(
 router.post(
   '/ask',
   authenticate,
+  requirePermission('policies', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId, question } = req.body;
 
     if (!organizationId || !question) {
@@ -180,13 +161,6 @@ router.post(
 
     if (!process.env.OPENAI_API_KEY) {
       throw new AppError('OpenAI API key is not configured', 503);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const answer = await answerQuestion(question, organizationId);
@@ -203,19 +177,12 @@ router.post(
 router.get(
   '/status',
   authenticate,
+  requirePermission('policies', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId } = req.query;
 
     if (!organizationId) {
       throw new AppError('organizationId is required', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const status = await getIndexingStatus(organizationId as string);

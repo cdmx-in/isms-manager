@@ -44,6 +44,7 @@ export function SettingsPage() {
   const [profileData, setProfileData] = useState({
     firstName: user?.firstName || '',
     lastName: user?.lastName || '',
+    designation: (user as any)?.designation || '',
     email: user?.email || '',
   })
 
@@ -261,6 +262,21 @@ export function SettingsPage() {
                       }
                     />
                   </div>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="designation">Designation</Label>
+                  <Input
+                    id="designation"
+                    value={profileData.designation}
+                    onChange={(e) =>
+                      setProfileData({ ...profileData, designation: e.target.value })
+                    }
+                    placeholder="e.g., CISO, CTO, Security Manager, COO"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Your job title or role designation. This is displayed in version history and approval trails.
+                  </p>
                 </div>
 
                 <div className="grid gap-2">

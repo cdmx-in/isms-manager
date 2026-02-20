@@ -10,40 +10,18 @@ const axiosInstance = axios.create({
   },
 })
 
-// Request interceptor
-axiosInstance.interceptors.request.use(
-  (config) => {
-    const token = useAuthStore.getState().accessToken
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
-    return config
-  },
-  (error) => Promise.reject(error)
-)
-
-// Response interceptor for token refresh
+// Response interceptor — redirect to login on 401 (session expired)
 axiosInstance.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config
-
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true
-
-      try {
-        const response = await axios.post('/api/auth/refresh', {}, { withCredentials: true })
-        const { accessToken } = response.data.data
-        useAuthStore.getState().setAccessToken(accessToken)
-        originalRequest.headers.Authorization = `Bearer ${accessToken}`
-        return axiosInstance(originalRequest)
-      } catch (refreshError) {
+    if (error.response?.status === 401) {
+      const url = error.config?.url || ''
+      // Don't redirect on auth check or logout — these are expected to 401 when not logged in
+      if (!url.includes('/auth/me') && !url.includes('/auth/logout')) {
         useAuthStore.getState().logout()
         window.location.href = '/login'
-        return Promise.reject(refreshError)
       }
     }
-
     return Promise.reject(error)
   }
 )
@@ -59,7 +37,6 @@ export const authApi = {
     axiosInstance.post('/auth/register', data),
   logout: () => axiosInstance.post('/auth/logout'),
   me: () => axiosInstance.get('/auth/me'),
-  refresh: () => axiosInstance.post('/auth/refresh'),
 }
 
 export const organizationApi = {
@@ -74,6 +51,21 @@ export const organizationApi = {
     axiosInstance.patch(`/organizations/${orgId}/members/${memberId}`, { role }),
   removeMember: (orgId: string, memberId: string) =>
     axiosInstance.delete(`/organizations/${orgId}/members/${memberId}`),
+  updateMemberOrgRole: (orgId: string, memberId: string, orgRoleId: string | null) =>
+    axiosInstance.patch(`/organizations/${orgId}/members/${memberId}`, { orgRoleId }),
+}
+
+export const roleApi = {
+  list: (orgId: string) => axiosInstance.get(`/organizations/${orgId}/roles`),
+  create: (orgId: string, data: { name: string; description?: string; permissions: string[] }) =>
+    axiosInstance.post(`/organizations/${orgId}/roles`, data),
+  update: (orgId: string, roleId: string, data: { name?: string; description?: string; permissions?: string[] }) =>
+    axiosInstance.patch(`/organizations/${orgId}/roles/${roleId}`, data),
+  delete: (orgId: string, roleId: string) =>
+    axiosInstance.delete(`/organizations/${orgId}/roles/${roleId}`),
+  seed: (orgId: string, linkMembers?: boolean) =>
+    axiosInstance.post(`/organizations/${orgId}/roles/seed`, { linkMembers }),
+  modules: () => axiosInstance.get('/permissions/modules'),
 }
 
 export const assetApi = {
@@ -96,8 +88,8 @@ export const riskApi = {
   delete: (id: string) => axiosInstance.delete(`/risks/${id}`),
   heatmap: (organizationId: string) => axiosInstance.get('/risks/heatmap', { params: { organizationId } }),
   linkControls: (id: string, controlIds: string[]) => axiosInstance.post(`/risks/${id}/controls`, { controlIds }),
-  submitForReview: (id: string, changeDescription?: string) =>
-    axiosInstance.post(`/risks/${id}/submit-for-review`, { changeDescription }),
+  submitForReview: (id: string, changeDescription?: string, versionBump?: string) =>
+    axiosInstance.post(`/risks/${id}/submit-for-review`, { changeDescription, versionBump }),
   firstApproval: (id: string, comments?: string) =>
     axiosInstance.post(`/risks/${id}/first-approval`, { comments }),
   secondApproval: (id: string, comments?: string) =>
@@ -159,7 +151,7 @@ export const ragApi = {
 }
 
 export const soaApi = {
-  list: (params: { organizationId: string; page?: number; limit?: number; search?: string; category?: string; status?: string; approvalStatus?: string }) =>
+  list: (params: { organizationId: string; page?: number; limit?: number; search?: string; category?: string; status?: string }) =>
     axiosInstance.get('/soa', { params }),
   get: (id: string) => axiosInstance.get(`/soa/${id}`),
   update: (id: string, data: any) =>
@@ -169,19 +161,27 @@ export const soaApi = {
   initialize: (organizationId: string) => axiosInstance.post('/soa/initialize', { organizationId }),
   export: (organizationId: string, format: string = 'json') =>
     axiosInstance.get('/soa/export', { params: { organizationId, format } }),
-  getVersions: (id: string) => axiosInstance.get(`/soa/${id}/versions`),
-  submitForReview: (id: string, changeDescription?: string) =>
-    axiosInstance.post(`/soa/${id}/submit-for-review`, { changeDescription }),
-  firstApproval: (id: string, comments?: string) =>
-    axiosInstance.post(`/soa/${id}/first-approval`, { comments }),
-  secondApproval: (id: string, comments?: string) =>
-    axiosInstance.post(`/soa/${id}/second-approval`, { comments }),
-  reject: (id: string, reason: string) =>
-    axiosInstance.post(`/soa/${id}/reject`, { reason }),
-  pendingApprovals: (organizationId: string) =>
-    axiosInstance.get('/soa/pending-approvals', { params: { organizationId } }),
-  bulkSubmit: (organizationId: string) =>
-    axiosInstance.post('/soa/bulk-submit', { organizationId }),
+  // Document-level endpoints
+  getDocument: (organizationId: string) =>
+    axiosInstance.get('/soa/document', { params: { organizationId } }),
+  updateDocument: (organizationId: string, data: any) =>
+    axiosInstance.patch('/soa/document', { organizationId, ...data }),
+  getDocumentVersions: (organizationId: string) =>
+    axiosInstance.get('/soa/document/versions', { params: { organizationId } }),
+  submitForReview: (organizationId: string, changeDescription?: string, versionBump?: string) =>
+    axiosInstance.post('/soa/document/submit-for-review', { organizationId, changeDescription, versionBump }),
+  firstApproval: (organizationId: string, comments?: string) =>
+    axiosInstance.post('/soa/document/first-approval', { organizationId, comments }),
+  secondApproval: (organizationId: string, comments?: string) =>
+    axiosInstance.post('/soa/document/second-approval', { organizationId, comments }),
+  reject: (organizationId: string, reason: string) =>
+    axiosInstance.post('/soa/document/reject', { organizationId, reason }),
+  newRevision: (organizationId: string, changeDescription?: string, versionBump?: string) =>
+    axiosInstance.post('/soa/document/new-revision', { organizationId, changeDescription, versionBump }),
+  updateVersionDescription: (versionId: string, changeDescription: string) =>
+    axiosInstance.patch(`/soa/document/versions/${versionId}`, { changeDescription }),
+  discardRevision: (organizationId: string) =>
+    axiosInstance.post('/soa/document/discard-revision', { organizationId }),
 }
 
 export const incidentApi = {
@@ -224,6 +224,79 @@ export const changeKnowledgeApi = {
     axiosInstance.get(`/change-knowledge/similar/${itopId}`, { params: { organizationId, limit } }),
   ask: (organizationId: string, question: string) =>
     axiosInstance.post('/change-knowledge/ask', { organizationId, question }),
+}
+
+export const exemptionApi = {
+  list: (params: {
+    organizationId: string;
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: string;
+    approvalStatus?: string;
+    frameworkId?: string;
+    exemptionType?: string;
+    controlId?: string;
+  }) => axiosInstance.get('/exemptions', { params }),
+  stats: (organizationId: string) =>
+    axiosInstance.get('/exemptions/stats', { params: { organizationId } }),
+  get: (id: string) => axiosInstance.get(`/exemptions/${id}`),
+  create: (data: any) => axiosInstance.post('/exemptions', data),
+  update: (id: string, data: any) => axiosInstance.patch(`/exemptions/${id}`, data),
+  submitForReview: (id: string, changeDescription?: string) =>
+    axiosInstance.post(`/exemptions/${id}/submit-for-review`, { changeDescription }),
+  firstApproval: (id: string, comments?: string) =>
+    axiosInstance.post(`/exemptions/${id}/first-approval`, { comments }),
+  secondApproval: (id: string, comments?: string) =>
+    axiosInstance.post(`/exemptions/${id}/second-approval`, { comments }),
+  reject: (id: string, reason: string) =>
+    axiosInstance.post(`/exemptions/${id}/reject`, { reason }),
+  revoke: (id: string, reason: string) =>
+    axiosInstance.post(`/exemptions/${id}/revoke`, { reason }),
+  renew: (id: string, data: any) =>
+    axiosInstance.post(`/exemptions/${id}/renew`, data),
+  getVersions: (id: string) => axiosInstance.get(`/exemptions/${id}/versions`),
+}
+
+export const assessmentApi = {
+  list: (organizationId: string) =>
+    axiosInstance.get('/assessments', { params: { organizationId } }),
+  frameworks: () =>
+    axiosInstance.get('/assessments/frameworks'),
+  get: (id: string) =>
+    axiosInstance.get(`/assessments/${id}`),
+  create: (data: any) =>
+    axiosInstance.post('/assessments', data),
+  update: (id: string, data: any) =>
+    axiosInstance.patch(`/assessments/${id}`, data),
+  delete: (id: string) =>
+    axiosInstance.delete(`/assessments/${id}`),
+  getRequirements: (id: string, params?: { frameworkSlug?: string; domainCode?: string; status?: string }) =>
+    axiosInstance.get(`/assessments/${id}/requirements`, { params }),
+  updateRequirement: (id: string, reqId: string, data: any) =>
+    axiosInstance.patch(`/assessments/${id}/requirements/${reqId}`, data),
+  addEvidence: (id: string, reqId: string, formData: FormData) =>
+    axiosInstance.post(`/assessments/${id}/requirements/${reqId}/evidence`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  addEvidenceLink: (id: string, reqId: string, data: { title: string; description?: string; evidenceType: string; link?: string }) =>
+    axiosInstance.post(`/assessments/${id}/requirements/${reqId}/evidence`, data),
+  removeEvidence: (id: string, evidenceId: string) =>
+    axiosInstance.delete(`/assessments/${id}/evidence/${evidenceId}`),
+  getFindings: (id: string, params?: { frameworkSlug?: string; severity?: string; status?: string }) =>
+    axiosInstance.get(`/assessments/${id}/findings`, { params }),
+  createFinding: (id: string, data: any) =>
+    axiosInstance.post(`/assessments/${id}/findings`, data),
+  updateFinding: (id: string, findingId: string, data: any) =>
+    axiosInstance.patch(`/assessments/${id}/findings/${findingId}`, data),
+  deleteFinding: (id: string, findingId: string) =>
+    axiosInstance.delete(`/assessments/${id}/findings/${findingId}`),
+  getProgress: (id: string) =>
+    axiosInstance.get(`/assessments/${id}/progress`),
+  getReport: (id: string) =>
+    axiosInstance.get(`/assessments/${id}/report`, { responseType: 'blob' }),
+  aiAnalyze: (id: string) =>
+    axiosInstance.post(`/assessments/${id}/ai-analyze`),
+  aiAssistRequirement: (id: string, reqId: string, question?: string) =>
+    axiosInstance.post(`/assessments/${id}/requirements/${reqId}/ai-assist`, { question }),
 }
 
 export const auditApi = {
@@ -293,6 +366,17 @@ export const userApi = {
   updateProfile: (data: any) => axiosInstance.patch('/users/profile', data),
   changePassword: (data: { currentPassword: string; newPassword: string }) =>
     axiosInstance.post('/auth/change-password', data),
+}
+
+export const notificationApi = {
+  list: (organizationId: string, params?: { unreadOnly?: boolean; limit?: number }) =>
+    axiosInstance.get('/notifications', { params: { organizationId, ...params } }),
+  unreadCount: (organizationId: string) =>
+    axiosInstance.get('/notifications/count', { params: { organizationId } }),
+  markRead: (id: string) =>
+    axiosInstance.patch(`/notifications/${id}/read`),
+  markAllRead: (organizationId: string) =>
+    axiosInstance.post('/notifications/mark-all-read', { organizationId }),
 }
 
 // Unified API object for components - wraps raw API calls with response extraction
@@ -466,7 +550,7 @@ export const api = {
     },
   },
   soa: {
-    list: async (organizationId: string, params?: { search?: string; category?: string; status?: string; approvalStatus?: string }) => {
+    list: async (organizationId: string, params?: { search?: string; category?: string; status?: string }) => {
       const response = await soaApi.list({ organizationId, ...params })
       return response.data
     },
@@ -478,40 +562,53 @@ export const api = {
       const response = await soaApi.update(id, data)
       return response.data?.data
     },
-    getVersions: async (id: string) => {
-      const response = await soaApi.getVersions(id)
-      return response.data?.data || []
-    },
-    submitForReview: async (id: string, changeDescription?: string) => {
-      const response = await soaApi.submitForReview(id, changeDescription)
-      return response.data
-    },
-    firstApproval: async (id: string, comments?: string) => {
-      const response = await soaApi.firstApproval(id, comments)
-      return response.data
-    },
-    secondApproval: async (id: string, comments?: string) => {
-      const response = await soaApi.secondApproval(id, comments)
-      return response.data
-    },
-    reject: async (id: string, reason: string) => {
-      const response = await soaApi.reject(id, reason)
-      return response.data
-    },
-    pendingApprovals: async (organizationId: string) => {
-      const response = await soaApi.pendingApprovals(organizationId)
-      return response.data?.data || []
-    },
-    bulkSubmit: async (organizationId: string) => {
-      const response = await soaApi.bulkSubmit(organizationId)
-      return response.data
-    },
     initialize: async (organizationId: string) => {
       const response = await soaApi.initialize(organizationId)
       return response.data?.data
     },
     export: async (organizationId: string, format: string = 'csv') => {
       const response = await soaApi.export(organizationId, format)
+      return response.data
+    },
+    // Document-level
+    getDocument: async (organizationId: string) => {
+      const response = await soaApi.getDocument(organizationId)
+      return response.data?.data
+    },
+    updateDocument: async (organizationId: string, data: any) => {
+      const response = await soaApi.updateDocument(organizationId, data)
+      return response.data?.data
+    },
+    getDocumentVersions: async (organizationId: string) => {
+      const response = await soaApi.getDocumentVersions(organizationId)
+      return response.data?.data || []
+    },
+    submitForReview: async (organizationId: string, changeDescription?: string, versionBump?: string) => {
+      const response = await soaApi.submitForReview(organizationId, changeDescription, versionBump)
+      return response.data
+    },
+    firstApproval: async (organizationId: string, comments?: string) => {
+      const response = await soaApi.firstApproval(organizationId, comments)
+      return response.data
+    },
+    secondApproval: async (organizationId: string, comments?: string) => {
+      const response = await soaApi.secondApproval(organizationId, comments)
+      return response.data
+    },
+    reject: async (organizationId: string, reason: string) => {
+      const response = await soaApi.reject(organizationId, reason)
+      return response.data
+    },
+    newRevision: async (organizationId: string, changeDescription?: string, versionBump?: string) => {
+      const response = await soaApi.newRevision(organizationId, changeDescription, versionBump)
+      return response.data
+    },
+    updateVersionDescription: async (versionId: string, changeDescription: string) => {
+      const response = await soaApi.updateVersionDescription(versionId, changeDescription)
+      return response.data
+    },
+    discardRevision: async (organizationId: string) => {
+      const response = await soaApi.discardRevision(organizationId)
       return response.data
     },
   },
@@ -587,10 +684,164 @@ export const api = {
       return response.data?.data
     },
   },
+  exemptions: {
+    list: async (organizationId: string, params?: {
+      search?: string;
+      status?: string;
+      approvalStatus?: string;
+      frameworkId?: string;
+      exemptionType?: string;
+      page?: number;
+      limit?: number;
+    }) => {
+      const response = await exemptionApi.list({ organizationId, ...params })
+      return response.data
+    },
+    stats: async (organizationId: string) => {
+      const response = await exemptionApi.stats(organizationId)
+      return response.data?.data
+    },
+    get: async (id: string) => {
+      const response = await exemptionApi.get(id)
+      return response.data?.data
+    },
+    create: async (data: any) => {
+      const response = await exemptionApi.create(data)
+      return response.data?.data
+    },
+    update: async (id: string, data: any) => {
+      const response = await exemptionApi.update(id, data)
+      return response.data?.data
+    },
+    submitForReview: async (id: string, changeDescription?: string) => {
+      const response = await exemptionApi.submitForReview(id, changeDescription)
+      return response.data
+    },
+    firstApproval: async (id: string, comments?: string) => {
+      const response = await exemptionApi.firstApproval(id, comments)
+      return response.data
+    },
+    secondApproval: async (id: string, comments?: string) => {
+      const response = await exemptionApi.secondApproval(id, comments)
+      return response.data
+    },
+    reject: async (id: string, reason: string) => {
+      const response = await exemptionApi.reject(id, reason)
+      return response.data
+    },
+    revoke: async (id: string, reason: string) => {
+      const response = await exemptionApi.revoke(id, reason)
+      return response.data
+    },
+    renew: async (id: string, data: any) => {
+      const response = await exemptionApi.renew(id, data)
+      return response.data
+    },
+    getVersions: async (id: string) => {
+      const response = await exemptionApi.getVersions(id)
+      return response.data?.data || []
+    },
+  },
+  assessments: {
+    list: async (organizationId: string) => {
+      const response = await assessmentApi.list(organizationId)
+      return response.data?.data || []
+    },
+    frameworks: async () => {
+      const response = await assessmentApi.frameworks()
+      return response.data?.data || []
+    },
+    get: async (id: string) => {
+      const response = await assessmentApi.get(id)
+      return response.data?.data
+    },
+    create: async (data: any) => {
+      const response = await assessmentApi.create(data)
+      return response.data?.data
+    },
+    update: async (id: string, data: any) => {
+      const response = await assessmentApi.update(id, data)
+      return response.data?.data
+    },
+    delete: async (id: string) => {
+      const response = await assessmentApi.delete(id)
+      return response.data
+    },
+    getRequirements: async (id: string, params?: { frameworkSlug?: string; domainCode?: string; status?: string }) => {
+      const response = await assessmentApi.getRequirements(id, params)
+      return response.data?.data || []
+    },
+    updateRequirement: async (id: string, reqId: string, data: any) => {
+      const response = await assessmentApi.updateRequirement(id, reqId, data)
+      return response.data?.data
+    },
+    addEvidence: async (id: string, reqId: string, formData: FormData) => {
+      const response = await assessmentApi.addEvidence(id, reqId, formData)
+      return response.data?.data
+    },
+    addEvidenceLink: async (id: string, reqId: string, data: { title: string; description?: string; evidenceType: string; link?: string }) => {
+      const response = await assessmentApi.addEvidenceLink(id, reqId, data)
+      return response.data?.data
+    },
+    removeEvidence: async (id: string, evidenceId: string) => {
+      const response = await assessmentApi.removeEvidence(id, evidenceId)
+      return response.data
+    },
+    getFindings: async (id: string, params?: any) => {
+      const response = await assessmentApi.getFindings(id, params)
+      return response.data?.data || []
+    },
+    createFinding: async (id: string, data: any) => {
+      const response = await assessmentApi.createFinding(id, data)
+      return response.data?.data
+    },
+    updateFinding: async (id: string, findingId: string, data: any) => {
+      const response = await assessmentApi.updateFinding(id, findingId, data)
+      return response.data?.data
+    },
+    deleteFinding: async (id: string, findingId: string) => {
+      const response = await assessmentApi.deleteFinding(id, findingId)
+      return response.data
+    },
+    getProgress: async (id: string) => {
+      const response = await assessmentApi.getProgress(id)
+      return response.data?.data
+    },
+    getReport: async (id: string) => {
+      const response = await assessmentApi.getReport(id)
+      return response.data
+    },
+    aiAnalyze: async (id: string) => {
+      const response = await assessmentApi.aiAnalyze(id)
+      return response.data?.data
+    },
+    aiAssistRequirement: async (id: string, reqId: string, question?: string) => {
+      const response = await assessmentApi.aiAssistRequirement(id, reqId, question)
+      return response.data?.data
+    },
+  },
   audit: {
     list: async (organizationId: string, params?: { search?: string; entityType?: string; action?: string }) => {
       const response = await auditApi.list({ organizationId, ...params })
       return response.data?.data || []
+    },
+  },
+  notifications: {
+    list: async (organizationId: string, params?: { unreadOnly?: boolean; limit?: number }) => {
+      const response = await notificationApi.list(organizationId, params)
+      return response.data?.data || []
+    },
+    unreadCount: async (organizationId: string) => {
+      const response = await notificationApi.unreadCount(organizationId)
+      return response.data?.data?.count || 0
+    },
+    markRead: async (id: string) => {
+      const response = await notificationApi.markRead(id)
+      return response.data?.data
+    },
+    markAllRead: async (organizationId: string) => {
+      const response = await notificationApi.markAllRead(organizationId)
+      return response.data
     },
   },
   dashboard: dashboardApi,

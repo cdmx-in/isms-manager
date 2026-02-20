@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.js';
+import { authenticate, requirePermission } from '../middleware/auth.js';
 import {
   startSync,
   getSyncJobStatus,
@@ -12,21 +12,16 @@ import {
 
 const router = Router();
 
-// Start sync from iTop (admin only)
+// Start sync from iTop
 router.post(
   '/sync',
   authenticate,
+  requirePermission('incidents', 'edit'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId, mode } = req.body;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    // Admin only
-    if (authReq.user.role !== 'ADMIN' && authReq.user.role !== 'LOCAL_ADMIN') {
-      throw new AppError('Only admins can trigger sync', 403);
     }
 
     if (!process.env.OPENAI_API_KEY) {
@@ -52,6 +47,7 @@ router.post(
 router.get(
   '/sync/:jobId',
   authenticate,
+  requirePermission('incidents', 'view'),
   asyncHandler(async (req, res) => {
     const job = await getSyncJobStatus(req.params.jobId);
 
@@ -70,6 +66,7 @@ router.get(
 router.get(
   '/status',
   authenticate,
+  requirePermission('incidents', 'view'),
   asyncHandler(async (req, res) => {
     const { organizationId } = req.query;
 
@@ -90,6 +87,7 @@ router.get(
 router.get(
   '/search',
   authenticate,
+  requirePermission('incidents', 'view'),
   asyncHandler(async (req, res) => {
     const { organizationId, q, limit } = req.query;
 
@@ -121,6 +119,7 @@ router.get(
 router.get(
   '/similar/:itopId',
   authenticate,
+  requirePermission('incidents', 'view'),
   asyncHandler(async (req, res) => {
     const { organizationId, limit } = req.query;
     const { itopId } = req.params;
@@ -150,6 +149,7 @@ router.get(
 router.post(
   '/ask',
   authenticate,
+  requirePermission('incidents', 'view'),
   asyncHandler(async (req, res) => {
     const { organizationId, question } = req.body;
 

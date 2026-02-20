@@ -13,6 +13,13 @@ interface User {
     organizationId: string
     role: string
     isDefault?: boolean
+    orgRoleId?: string | null
+    orgRole?: {
+      id: string
+      name: string
+      permissions: string[]
+    } | null
+    effectivePermissions?: string[]
     organization: {
       id: string
       name: string
@@ -21,16 +28,31 @@ interface User {
   }>
 }
 
+// Helper: compute permissions for a given org membership
+function getPermissionsForMembership(
+  user: User | null,
+  orgId: string | null
+): string[] {
+  if (!user || !orgId) return []
+  // Global admin gets everything
+  if (user.role === 'ADMIN') return ['*']
+  const membership = user.organizationMemberships.find(
+    m => m.organizationId === orgId
+  )
+  if (!membership) return []
+  return membership.effectivePermissions || []
+}
+
 interface AuthState {
   user: User | null
-  accessToken: string | null
   isAuthenticated: boolean
   isLoading: boolean
   currentOrganizationId: string | null
-  
+  permissions: string[]
+
   setUser: (user: User | null) => void
-  setAccessToken: (token: string | null) => void
   setCurrentOrganization: (id: string | null) => void
+  hasPermission: (module: string, action?: string) => boolean
   login: (email: string, password: string) => Promise<void>
   register: (data: { email: string; password: string; firstName: string; lastName: string; organizationName?: string }) => Promise<void>
   logout: () => Promise<void>
@@ -47,44 +69,64 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
       user: null,
-      accessToken: null,
       isAuthenticated: false,
       isLoading: true,
       currentOrganizationId: null,
+      permissions: [],
 
-      setUser: (user) => set({ user, isAuthenticated: !!user }),
-      
-      setAccessToken: (accessToken) => set({ accessToken }),
-      
-      setCurrentOrganization: (currentOrganizationId) => set({ currentOrganizationId }),
+      setUser: (user) => {
+        const orgId = get().currentOrganizationId
+        set({
+          user,
+          isAuthenticated: !!user,
+          permissions: getPermissionsForMembership(user, orgId),
+        })
+      },
+
+      setCurrentOrganization: (currentOrganizationId) => {
+        const { user } = get()
+        set({
+          currentOrganizationId,
+          permissions: getPermissionsForMembership(user, currentOrganizationId),
+        })
+      },
+
+      hasPermission: (module: string, action: string = 'view') => {
+        const { user, permissions } = get()
+        // Global admin always has access
+        if (user?.role === 'ADMIN') return true
+        // Wildcard (shouldn't normally happen but safety)
+        if (permissions.includes('*')) return true
+        return permissions.includes(`${module}:${action}`)
+      },
 
       login: async (email, password) => {
         const response = await authApi.login(email, password)
-        const { user, accessToken } = response.data.data
-        
+        const { user } = response.data.data
+
         const currentOrganizationId = getPreferredOrgId(user.organizationMemberships)
 
         set({
           user,
-          accessToken,
           isAuthenticated: true,
           isLoading: false,
           currentOrganizationId,
+          permissions: getPermissionsForMembership(user, currentOrganizationId),
         })
       },
 
       register: async (data) => {
         const response = await authApi.register(data)
-        const { user, accessToken } = response.data.data
+        const { user } = response.data.data
 
         const currentOrganizationId = getPreferredOrgId(user.organizationMemberships)
 
         set({
           user,
-          accessToken,
           isAuthenticated: true,
           isLoading: false,
           currentOrganizationId,
+          permissions: getPermissionsForMembership(user, currentOrganizationId),
         })
       },
 
@@ -94,11 +136,11 @@ export const useAuthStore = create<AuthState>()(
         } catch (error) {
           // Ignore logout errors
         } finally {
-          set({ 
-            user: null, 
-            accessToken: null, 
-            isAuthenticated: false, 
-            currentOrganizationId: null 
+          set({
+            user: null,
+            isAuthenticated: false,
+            currentOrganizationId: null,
+            permissions: [],
           })
         }
       },
@@ -114,26 +156,27 @@ export const useAuthStore = create<AuthState>()(
           const currentOrganizationId = isStoredOrgValid
             ? storedOrgId
             : getPreferredOrgId(user.organizationMemberships)
-          
-          set({ 
-            user, 
-            isAuthenticated: true, 
+
+          set({
+            user,
+            isAuthenticated: true,
             isLoading: false,
             currentOrganizationId,
+            permissions: getPermissionsForMembership(user, currentOrganizationId),
           })
         } catch (error) {
-          set({ 
-            user: null, 
-            isAuthenticated: false, 
-            isLoading: false 
+          set({
+            user: null,
+            isAuthenticated: false,
+            isLoading: false,
+            permissions: [],
           })
         }
       },
     }),
     {
       name: 'auth-storage',
-      partialize: (state) => ({ 
-        accessToken: state.accessToken,
+      partialize: (state) => ({
         currentOrganizationId: state.currentOrganizationId,
       }),
     }

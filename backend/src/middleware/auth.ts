@@ -1,8 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import passport from 'passport';
-import jwt from 'jsonwebtoken';
-import { Role, User } from '@prisma/client';
+import { Role } from '@prisma/client';
 import { AppError } from './errorHandler.js';
+import { Module, Action, Permission, getLegacyPermissions } from '../constants/permissions.js';
 
 // Extend Express Request type
 declare global {
@@ -13,10 +12,17 @@ declare global {
       firstName: string;
       lastName: string;
       role: Role;
+      designation: string | null;
       isActive: boolean;
       organizationMemberships: Array<{
         organizationId: string;
         role: Role;
+        orgRoleId: string | null;
+        orgRole: {
+          id: string;
+          name: string;
+          permissions: string[];
+        } | null;
         organization: {
           id: string;
           name: string;
@@ -32,33 +38,21 @@ export interface AuthenticatedRequest extends Request {
   organizationId?: string;
 }
 
-// JWT Authentication middleware
-export const authenticate = (req: Request, res: Response, next: NextFunction) => {
-  passport.authenticate('jwt', { session: false }, (err: Error, user: Express.User, info: any) => {
-    if (err) {
-      return next(err);
-    }
-    
-    if (!user) {
-      return next(new AppError(info?.message || 'Authentication required', 401));
-    }
-    
-    req.user = user;
-    next();
-  })(req, res, next);
+// Session-based authentication middleware
+export const authenticate = (req: Request, _res: Response, next: NextFunction) => {
+  if (req.isAuthenticated() && req.user) {
+    return next();
+  }
+  return next(new AppError('Authentication required', 401));
 };
 
-// Optional authentication - doesn't fail if no token
-export const optionalAuth = (req: Request, res: Response, next: NextFunction) => {
-  passport.authenticate('jwt', { session: false }, (err: Error, user: Express.User) => {
-    if (user) {
-      req.user = user;
-    }
-    next();
-  })(req, res, next);
+// Optional authentication - doesn't fail if no session
+export const optionalAuth = (_req: Request, _res: Response, next: NextFunction) => {
+  // req.user is already populated by passport.session() if a valid session exists
+  next();
 };
 
-// Role-based authorization middleware
+// Role-based authorization middleware (legacy — kept for backward compat)
 export const authorize = (...roles: Role[]) => {
   return (req: Request, _res: Response, next: NextFunction) => {
     if (!req.user) {
@@ -111,7 +105,7 @@ export const requireOrgMembership = (req: Request, _res: Response, next: NextFun
   next();
 };
 
-// Organization role check
+// Organization role check (legacy — kept for backward compat)
 export const requireOrgRole = (...roles: Role[]) => {
   return (req: Request, _res: Response, next: NextFunction) => {
     const authReq = req as AuthenticatedRequest;
@@ -143,32 +137,77 @@ export const requireOrgRole = (...roles: Role[]) => {
   };
 };
 
-// Generate JWT tokens
-export const generateTokens = (user: { id: string; email: string; role: Role }) => {
-  const accessToken = jwt.sign(
-    { 
-      sub: user.id, 
-      email: user.email,
-      role: user.role,
-      type: 'access'
-    },
-    process.env.JWT_SECRET || 'your-secret-key',
-    { expiresIn: '15m' }
-  );
+// ============================================
+// NEW: Permission-based authorization
+// ============================================
 
-  const refreshToken = jwt.sign(
-    { 
-      sub: user.id,
-      type: 'refresh'
-    },
-    process.env.JWT_REFRESH_SECRET || 'your-refresh-secret',
-    { expiresIn: '7d' }
-  );
+// Middleware: require a specific module:action permission
+export const requirePermission = (module: Module, action: Action) => {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    const authReq = req as AuthenticatedRequest;
 
-  return { accessToken, refreshToken };
+    if (!authReq.user) {
+      return next(new AppError('Authentication required', 401));
+    }
+
+    // Global ADMIN always has full access
+    if (authReq.user.role === 'ADMIN') {
+      return next();
+    }
+
+    const orgId = authReq.organizationId
+      || req.params.organizationId
+      || req.body.organizationId
+      || (req.query.organizationId as string);
+
+    if (!orgId) {
+      return next(new AppError('Organization context required', 400));
+    }
+
+    const membership = authReq.user.organizationMemberships.find(
+      m => m.organizationId === orgId
+    );
+
+    if (!membership) {
+      return next(new AppError('You are not a member of this organization', 403));
+    }
+
+    const permission = `${module}:${action}` as Permission;
+
+    // Check orgRole permissions if assigned, otherwise fall back to legacy role
+    const effectivePermissions = membership.orgRole
+      ? membership.orgRole.permissions
+      : getLegacyPermissions(membership.role);
+
+    if (effectivePermissions.includes(permission)) {
+      // Also set organizationId on the request for downstream use
+      authReq.organizationId = orgId;
+      return next();
+    }
+
+    return next(new AppError('You do not have permission to perform this action', 403));
+  };
 };
 
-// Verify refresh token
-export const verifyRefreshToken = (token: string): { sub: string } => {
-  return jwt.verify(token, process.env.JWT_REFRESH_SECRET || 'your-refresh-secret') as { sub: string };
-};
+// Helper: check permission inline (for conditional logic within handlers)
+export function hasPermission(
+  user: Express.User,
+  orgId: string,
+  module: Module,
+  action: Action
+): boolean {
+  if (user.role === 'ADMIN') return true;
+
+  const membership = user.organizationMemberships.find(
+    m => m.organizationId === orgId
+  );
+  if (!membership) return false;
+
+  const permission = `${module}:${action}` as Permission;
+  const effectivePermissions = membership.orgRole
+    ? membership.orgRole.permissions
+    : getLegacyPermissions(membership.role);
+
+  return effectivePermissions.includes(permission);
+}
+

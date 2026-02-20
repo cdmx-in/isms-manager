@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../index.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { authenticate, requireOrgMembership, AuthenticatedRequest } from '../middleware/auth.js';
+import { authenticate, requirePermission, AuthenticatedRequest } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { createRiskValidator, uuidParam, paginationQuery } from '../middleware/validators.js';
 import { createAuditLog } from '../services/audit.service.js';
@@ -36,19 +36,12 @@ const getNextVersion = async (riskId: string, isMajor: boolean): Promise<number>
     select: { version: true },
   });
 
-  if (!lastVersion) {
-    return 0.1;
-  }
+  const current = lastVersion?.version ?? 0;
 
   if (isMajor) {
-    // Bump to next whole number (e.g., 1.1 -> 2.0, 0.1 -> 1.0)
-    return Math.floor(lastVersion.version) + 1.0;
+    return Math.floor(current) + 1;
   }
-
-  // Minor version bump (e.g., 1.0 -> 1.1, 2.0 -> 2.1)
-  const major = Math.floor(lastVersion.version);
-  const minor = Math.round((lastVersion.version - major) * 10);
-  return Number((major + (minor + 1) / 10).toFixed(1));
+  return Math.round((current + 0.1) * 10) / 10;
 };
 
 // Create a version snapshot for a risk
@@ -70,8 +63,23 @@ const createRiskVersionEntry = async (params: {
     },
   });
 
-  return prisma.riskVersion.create({
-    data: {
+  return prisma.riskVersion.upsert({
+    where: {
+      riskId_version: {
+        riskId: params.riskId,
+        version: params.version,
+      },
+    },
+    update: {
+      changeDescription: params.changeDescription,
+      actor: params.actor,
+      actorDesignation: params.actorDesignation,
+      action: params.action,
+      createdById: params.createdById,
+      approvedById: params.approvedById,
+      riskData: riskData as any,
+    },
+    create: {
       riskId: params.riskId,
       version: params.version,
       changeDescription: params.changeDescription,
@@ -93,10 +101,10 @@ const createRiskVersionEntry = async (params: {
 router.get(
   '/',
   authenticate,
+  requirePermission('risks', 'view'),
   paginationQuery,
   validate,
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const {
       page = 1,
       limit = 20,
@@ -112,13 +120,6 @@ router.get(
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const where: any = { organizationId };
@@ -163,19 +164,12 @@ router.get(
 router.get(
   '/heatmap',
   authenticate,
+  requirePermission('risks', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId } = req.query;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const risks = await prisma.risk.findMany({
@@ -229,19 +223,12 @@ router.get(
 router.get(
   '/retired/list',
   authenticate,
+  requirePermission('risks', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId } = req.query;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const retiredRisks = await prisma.riskRetirement.findMany({
@@ -279,19 +266,12 @@ router.get(
 router.get(
   '/pending-approvals/list',
   authenticate,
+  requirePermission('risks', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId } = req.query;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const pendingRisks = await prisma.risk.findMany({
@@ -413,6 +393,55 @@ router.get(
   })
 );
 
+// Update risk version entry description
+router.patch(
+  '/:id/versions/:versionId',
+  authenticate,
+  uuidParam('id'),
+  validate,
+  asyncHandler(async (req, res) => {
+    const { id, versionId } = req.params;
+    const authReq = req as AuthenticatedRequest;
+    const { changeDescription } = req.body;
+
+    if (!changeDescription?.trim()) throw new AppError('Change description is required', 400);
+
+    const risk = await prisma.risk.findUnique({ where: { id } });
+    if (!risk) throw new AppError('Risk not found', 404);
+
+    const membership = authReq.user.organizationMemberships.find(
+      m => m.organizationId === risk.organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('You are not authorized to edit this risk', 403);
+    }
+
+    const version = await prisma.riskVersion.findUnique({ where: { id: versionId } });
+    if (!version || version.riskId !== id) {
+      throw new AppError('Version entry not found', 404);
+    }
+
+    const updated = await prisma.riskVersion.update({
+      where: { id: versionId },
+      data: { changeDescription: changeDescription.trim() },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId: risk.organizationId,
+      action: 'UPDATE',
+      entityType: 'RiskVersion',
+      entityId: versionId,
+      oldValues: { changeDescription: version.changeDescription },
+      newValues: { changeDescription: changeDescription.trim() },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json({ success: true, data: updated });
+  })
+);
+
 // Get risk treatments
 router.get(
   '/:id/treatment',
@@ -455,6 +484,7 @@ router.get(
 router.post(
   '/',
   authenticate,
+  requirePermission('risks', 'edit'),
   createRiskValidator,
   validate,
   asyncHandler(async (req, res) => {
@@ -477,17 +507,6 @@ router.post(
       affectsIntegrity,
       affectsAvailability,
     } = req.body;
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
-
-    if (membership?.role === 'VIEWER') {
-      throw new AppError('Viewers cannot create risks', 403);
-    }
 
     const riskId = await generateRiskId(organizationId);
     const inherentRisk = likelihood * impact;
@@ -538,7 +557,7 @@ router.post(
       version: 0.1,
       changeDescription: `Initial risk identification: ${title}`,
       actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
-      actorDesignation: membership?.role || authReq.user.role,
+      actorDesignation: authReq.user.designation || authReq.user.organizationMemberships.find(m => m.organizationId === organizationId)?.role || authReq.user.role,
       action: 'Draft & Review',
       createdById: authReq.user.id,
     });
@@ -641,9 +660,6 @@ router.patch(
       updateData.approvalStatus = 'DRAFT';
     }
 
-    // Bump minor version
-    const nextVersion = await getNextVersion(id, false);
-    updateData.version = nextVersion;
     updateData.reviewedAt = new Date();
 
     const risk = await prisma.risk.update({
@@ -654,17 +670,6 @@ router.patch(
           select: { id: true, firstName: true, lastName: true, email: true },
         },
       },
-    });
-
-    // Create version entry for this update
-    await createRiskVersionEntry({
-      riskId: id,
-      version: nextVersion,
-      changeDescription: changeDescription || `Risk updated: ${Object.keys(updateData).filter(k => !['inherentRisk', 'version', 'reviewedAt', 'approvalStatus'].includes(k)).join(', ')}`,
-      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
-      actorDesignation: membership?.role || authReq.user.role,
-      action: 'Risk Re-assessment',
-      createdById: authReq.user.id,
     });
 
     await createAuditLog({
@@ -699,7 +704,9 @@ router.post(
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const authReq = req as AuthenticatedRequest;
-    const { changeDescription } = req.body;
+    const { changeDescription, versionBump } = req.body;
+
+    if (!changeDescription) throw new AppError('Description of change is required', 400);
 
     const risk = await prisma.risk.findUnique({ where: { id } });
     if (!risk) {
@@ -721,10 +728,16 @@ router.post(
       throw new AppError(`Risk cannot be submitted for review from ${risk.approvalStatus} status`, 400);
     }
 
+    // 'none'/undefined = keep current, 'minor'/'major' = bump
+    const nextVersion = (!versionBump || versionBump === 'none')
+      ? risk.version
+      : await getNextVersion(id, versionBump === 'major');
+
     const updatedRisk = await prisma.risk.update({
       where: { id },
       data: {
         approvalStatus: 'PENDING_FIRST_APPROVAL',
+        version: nextVersion,
         updatedAt: new Date(),
       },
       include: {
@@ -734,21 +747,14 @@ router.post(
       },
     });
 
-    // Create version entry for submission
-    const nextVersion = await getNextVersion(id, false);
     await createRiskVersionEntry({
       riskId: id,
       version: nextVersion,
-      changeDescription: changeDescription || `Risk submitted for review: ${risk.title}`,
+      changeDescription,
       actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
-      actorDesignation: membership?.role || authReq.user.role,
+      actorDesignation: authReq.user.designation || membership?.role || authReq.user.role,
       action: 'Submitted for Review',
       createdById: authReq.user.id,
-    });
-
-    await prisma.risk.update({
-      where: { id },
-      data: { version: nextVersion },
     });
 
     await createAuditLog({
@@ -818,23 +824,6 @@ router.post(
       },
     });
 
-    // Create version entry for 1st approval
-    const nextVersion = await getNextVersion(id, false);
-    await createRiskVersionEntry({
-      riskId: id,
-      version: nextVersion,
-      changeDescription: comments || `1st level approval granted for: ${risk.title}`,
-      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
-      actorDesignation: membership?.role || authReq.user.role,
-      action: '1st Level Approval',
-      approvedById: authReq.user.id,
-    });
-
-    await prisma.risk.update({
-      where: { id },
-      data: { version: nextVersion },
-    });
-
     await createAuditLog({
       userId: authReq.user.id,
       organizationId: risk.organizationId,
@@ -887,14 +876,10 @@ router.post(
       throw new AppError(`Risk is not pending 2nd level approval (current: ${risk.approvalStatus})`, 400);
     }
 
-    // Bump to major version for final approval (e.g., 0.3 -> 1.0, 1.2 -> 2.0)
-    const majorVersion = await getNextVersion(id, true);
-
     const updatedRisk = await prisma.risk.update({
       where: { id },
       data: {
         approvalStatus: 'APPROVED',
-        version: majorVersion,
         comments: comments || risk.comments,
         reviewedAt: new Date(),
         updatedAt: new Date(),
@@ -906,25 +891,14 @@ router.post(
       },
     });
 
-    // Create version entry for 2nd (final) approval
-    await createRiskVersionEntry({
-      riskId: id,
-      version: majorVersion,
-      changeDescription: comments || `Approved Version`,
-      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
-      actorDesignation: membership?.role || authReq.user.role,
-      action: '2nd Level Approval',
-      approvedById: authReq.user.id,
-    });
-
     await createAuditLog({
       userId: authReq.user.id,
       organizationId: risk.organizationId,
       action: 'APPROVE',
       entityType: 'Risk',
       entityId: id,
-      oldValues: { approvalStatus: 'PENDING_SECOND_APPROVAL', version: risk.version },
-      newValues: { approvalStatus: 'APPROVED', version: majorVersion, approvedBy: authReq.user.id },
+      oldValues: { approvalStatus: 'PENDING_SECOND_APPROVAL' },
+      newValues: { approvalStatus: 'APPROVED', approvedBy: authReq.user.id },
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
     });
@@ -932,7 +906,7 @@ router.post(
     res.json({
       success: true,
       data: updatedRisk,
-      message: 'Risk fully approved (2nd level). Version bumped to ' + majorVersion.toFixed(1),
+      message: 'Risk fully approved (v' + risk.version.toFixed(1) + ')',
     });
   })
 );
@@ -986,23 +960,6 @@ router.post(
           select: { id: true, firstName: true, lastName: true, email: true },
         },
       },
-    });
-
-    // Create version entry for rejection
-    const nextVersion = await getNextVersion(id, false);
-    await createRiskVersionEntry({
-      riskId: id,
-      version: nextVersion,
-      changeDescription: `Rejected: ${reason}`,
-      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
-      actorDesignation: membership?.role || authReq.user.role,
-      action: 'Rejected',
-      approvedById: authReq.user.id,
-    });
-
-    await prisma.risk.update({
-      where: { id },
-      data: { version: nextVersion },
     });
 
     await createAuditLog({
@@ -1094,22 +1051,7 @@ router.post(
       },
     });
 
-    // Create version entry for treatment
-    const nextVersion = await getNextVersion(id, false);
-    await createRiskVersionEntry({
-      riskId: id,
-      version: nextVersion,
-      changeDescription: comments || `Risk treatment applied: ${riskResponse}. Residual risk: ${residualProbability * residualImpact}`,
-      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
-      actorDesignation: membership?.role || authReq.user.role,
-      action: 'Risk Re-evaluation',
-      createdById: authReq.user.id,
-    });
-
-    await prisma.risk.update({
-      where: { id },
-      data: { version: nextVersion },
-    });
+    // No version bump on treatment — user controls versioning at submit time
 
     await createAuditLog({
       userId: authReq.user.id,
@@ -1223,14 +1165,13 @@ router.post(
       data: { status: 'CLOSED' },
     });
 
-    // Create version entry for retirement
-    const nextVersion = await getNextVersion(id, false);
+    // Log retirement at current version
     await createRiskVersionEntry({
       riskId: id,
-      version: nextVersion,
+      version: risk.version,
       changeDescription: `Risk retired: ${reason}`,
       actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
-      actorDesignation: membership?.role || authReq.user.role,
+      actorDesignation: authReq.user.designation || membership?.role || authReq.user.role,
       action: 'Risk Retired',
       createdById: authReq.user.id,
     });

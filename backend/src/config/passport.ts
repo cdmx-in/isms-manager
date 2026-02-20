@@ -1,5 +1,4 @@
 import { PassportStatic } from 'passport';
-import { Strategy as JwtStrategy, ExtractJwt, StrategyOptions } from 'passport-jwt';
 import { Strategy as LocalStrategy } from 'passport-local';
 import { Strategy as GoogleStrategy, Profile } from 'passport-google-oauth20';
 import bcrypt from 'bcryptjs';
@@ -7,59 +6,6 @@ import { prisma } from '../index.js';
 import { logger } from '../utils/logger.js';
 
 export const configurePassport = (passport: PassportStatic) => {
-  // JWT Strategy
-  const jwtOptions: StrategyOptions = {
-    jwtFromRequest: ExtractJwt.fromExtractors([
-      // Extract from Authorization header
-      ExtractJwt.fromAuthHeaderAsBearerToken(),
-      // Extract from cookie
-      (req) => {
-        let token = null;
-        if (req && req.cookies) {
-          token = req.cookies['isms.access_token'];
-        }
-        return token;
-      },
-    ]),
-    secretOrKey: process.env.JWT_SECRET || 'your-secret-key',
-    passReqToCallback: true,
-  };
-
-  passport.use(
-    'jwt',
-    new JwtStrategy(jwtOptions, async (req, payload, done) => {
-      try {
-        const user = await prisma.user.findUnique({
-          where: { id: payload.sub },
-          include: {
-            organizationMemberships: {
-              include: {
-                organization: true,
-              },
-            },
-          },
-        });
-
-        if (!user) {
-          return done(null, false, { message: 'User not found' });
-        }
-
-        if (!user.isActive) {
-          return done(null, false, { message: 'Account is deactivated' });
-        }
-
-        if (user.lockoutUntil && user.lockoutUntil > new Date()) {
-          return done(null, false, { message: 'Account is locked' });
-        }
-
-        return done(null, user);
-      } catch (error) {
-        logger.error('JWT Strategy error:', error);
-        return done(error, false);
-      }
-    })
-  );
-
   // Local Strategy (email/password)
   passport.use(
     'local',
@@ -77,6 +23,9 @@ export const configurePassport = (passport: PassportStatic) => {
               organizationMemberships: {
                 include: {
                   organization: true,
+                  orgRole: {
+                    select: { id: true, name: true, permissions: true },
+                  },
                 },
               },
             },
@@ -177,6 +126,9 @@ export const configurePassport = (passport: PassportStatic) => {
               organizationMemberships: {
                 include: {
                   organization: true,
+                  orgRole: {
+                    select: { id: true, name: true, permissions: true },
+                  },
                 },
               },
             },
@@ -201,6 +153,9 @@ export const configurePassport = (passport: PassportStatic) => {
                 organizationMemberships: {
                   include: {
                     organization: true,
+                    orgRole: {
+                      select: { id: true, name: true, permissions: true },
+                    },
                   },
                 },
               },
@@ -223,6 +178,9 @@ export const configurePassport = (passport: PassportStatic) => {
                 organizationMemberships: {
                   include: {
                     organization: true,
+                    orgRole: {
+                      select: { id: true, name: true, permissions: true },
+                    },
                   },
                 },
               },
@@ -263,7 +221,7 @@ export const configurePassport = (passport: PassportStatic) => {
     done(null, user.id);
   });
 
-  // Deserialize user from session
+  // Deserialize user from session (includes orgRole for RBAC permissions)
   passport.deserializeUser(async (id: string, done) => {
     try {
       const user = await prisma.user.findUnique({
@@ -272,10 +230,22 @@ export const configurePassport = (passport: PassportStatic) => {
           organizationMemberships: {
             include: {
               organization: true,
+              orgRole: {
+                select: { id: true, name: true, permissions: true },
+              },
             },
           },
         },
       });
+
+      if (!user || !user.isActive) {
+        return done(null, false);
+      }
+
+      if (user.lockoutUntil && user.lockoutUntil > new Date()) {
+        return done(null, false);
+      }
+
       done(null, user);
     } catch (error) {
       done(error, null);

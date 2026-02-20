@@ -28,63 +28,72 @@ enum AuthProvider {
   LOCAL
   GOOGLE
   GOOGLE_DRIVE
+
+  @@map("auth_provider")
 }
 
 model User {
-  id                String       @id @default(uuid())
-  email             String       @unique
-  passwordHash      String?
-  firstName         String
-  lastName          String
-  avatar            String?
-  role              Role         @default(USER)
-  authProvider      AuthProvider @default(LOCAL)
-  authProviderId    String?
-  isActive          Boolean      @default(true)
-  isEmailVerified   Boolean      @default(false)
-  passwordResetToken String?
-  passwordResetExpires DateTime?
-  lastLoginAt       DateTime?
-  failedLoginAttempts Int        @default(0)
-  lockoutUntil      DateTime?
-  
+  id                     String       @id @default(uuid())
+  email                  String       @unique
+  passwordHash           String?      @map("password_hash")
+  firstName              String       @map("first_name")
+  lastName               String       @map("last_name")
+  avatar                 String?
+  designation            String?
+  role                   Role         @default(USER)
+  authProvider           AuthProvider @default(LOCAL) @map("auth_provider")
+  authProviderId         String?      @map("auth_provider_id")
+  isActive               Boolean      @default(true) @map("is_active")
+  isEmailVerified        Boolean      @default(false) @map("is_email_verified")
+  passwordResetToken     String?      @map("password_reset_token")
+  passwordResetExpires   DateTime?    @map("password_reset_expires")
+  lastLoginAt            DateTime?    @map("last_login_at")
+  failedLoginAttempts    Int          @default(0) @map("failed_login_attempts")
+  lockoutUntil           DateTime?    @map("lockout_until")
+
   // Google Drive tokens (encrypted)
-  googleDriveAccessToken  String?
-  googleDriveRefreshToken String?
-  googleDriveTokenExpiry  DateTime?
-  
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  googleDriveAccessToken  String?     @map("google_drive_access_token")
+  googleDriveRefreshToken String?     @map("google_drive_refresh_token")
+  googleDriveTokenExpiry  DateTime?   @map("google_drive_token_expiry")
+
+  createdAt              DateTime     @default(now()) @map("created_at")
+  updatedAt              DateTime     @updatedAt @map("updated_at")
 
   // Relations
   organizationMemberships OrganizationMember[]
-  createdAssets     Asset[]      @relation("AssetCreatedBy")
-  ownedAssets       Asset[]      @relation("AssetOwner")
-  createdRisks      Risk[]       @relation("RiskCreatedBy")
-  ownedRisks        Risk[]       @relation("RiskOwner")
-  retiredRisks      RiskRetirement[] @relation("RiskRetiredBy")
-  createdControls   Control[]    @relation("ControlCreatedBy")
-  assignedControls  Control[]    @relation("ControlAssignee")
-  createdIncidents  Incident[]   @relation("IncidentCreatedBy")
-  assignedIncidents Incident[]   @relation("IncidentAssignee")
-  uploadedFiles     FileUpload[]
-  auditLogs         AuditLog[]   @relation("AuditLogUser")
+  createdAssets           Asset[]      @relation("AssetCreatedBy")
+  ownedAssets             Asset[]      @relation("AssetOwner")
+  createdRisks            Risk[]       @relation("RiskCreatedBy")
+  ownedRisks              Risk[]       @relation("RiskOwner")
+  retiredRisks            RiskRetirement[] @relation("RiskRetiredBy")
+  createdControls         Control[]    @relation("ControlCreatedBy")
+  assignedControls        Control[]    @relation("ControlAssignee")
+  createdIncidents        Incident[]   @relation("IncidentCreatedBy")
+  assignedIncidents       Incident[]   @relation("IncidentAssignee")
+  uploadedFiles           FileUpload[]
+  auditLogs               AuditLog[]   @relation("AuditLogUser")
+  requestedExemptions     Exemption[]  @relation("ExemptionRequestedBy")
+  soaReviewerFor          SoADocument[] @relation("SoAReviewer")
+  soaApproverFor          SoADocument[] @relation("SoAApprover")
+  notifications           Notification[]
 
   @@index([email])
   @@index([authProvider, authProviderId])
+  @@map("users")
 }
 
 model Session {
   id        String   @id @default(uuid())
   sid       String   @unique
   data      String
-  expiresAt DateTime
-  
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  expiresAt DateTime @map("expires_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([sid])
   @@index([expiresAt])
+  @@map("sessions")
 }
 
 // ============================================
@@ -97,49 +106,77 @@ model Organization {
   slug        String   @unique
   description String?
   logo        String?
-  isActive    Boolean  @default(true)
-  
+  isActive    Boolean  @default(true) @map("is_active")
+
   // Risk acceptance thresholds (CIA triad)
-  riskAcceptConfidentiality Int @default(3)
-  riskAcceptIntegrity       Int @default(3)
-  riskAcceptAvailability    Int @default(3)
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  riskAcceptConfidentiality Int @default(3) @map("risk_accept_confidentiality")
+  riskAcceptIntegrity       Int @default(3) @map("risk_accept_integrity")
+  riskAcceptAvailability    Int @default(3) @map("risk_accept_availability")
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   // Relations
-  members     OrganizationMember[]
-  assets      Asset[]
-  risks       Risk[]
-  controls       Control[]
-  incidents      Incident[]
-  audits         Audit[]
-  files          FileUpload[]
-  soaEntries     SoAEntry[]
-  driveFolders          DriveFolder[]
-  driveDocuments        DriveDocument[]
-  incidentEmbeddings    IncidentEmbedding[]
-  changeEmbeddings      ChangeEmbedding[]
+  members            OrganizationMember[]
+  roles              OrgRole[]
+  assets             Asset[]
+  risks              Risk[]
+  controls           Control[]
+  incidents          Incident[]
+  audits             Audit[]
+  files              FileUpload[]
+  soaEntries         SoAEntry[]
+  soaDocument        SoADocument?
+  driveFolders       DriveFolder[]
+  driveDocuments     DriveDocument[]
+  incidentEmbeddings IncidentEmbedding[]
+  changeEmbeddings   ChangeEmbedding[]
+  exemptions         Exemption[]
+  notifications      Notification[]
+  assessmentsV2      Assessment[]
 
   @@index([slug])
+  @@map("organizations")
 }
 
 model OrganizationMember {
   id             String       @id @default(uuid())
-  userId         String
-  organizationId String
+  userId         String       @map("user_id")
+  organizationId String       @map("organization_id")
   role           Role         @default(USER)
-  isDefault      Boolean      @default(false) // Default org for user
-  
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  orgRoleId      String?      @map("org_role_id")
+  isDefault      Boolean      @default(false) @map("is_default")
+
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
 
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  orgRole        OrgRole?     @relation(fields: [orgRoleId], references: [id], onDelete: SetNull)
 
   @@unique([userId, organizationId])
   @@index([userId])
   @@index([organizationId])
+  @@map("organization_members")
+}
+
+model OrgRole {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  name           String
+  description    String?
+  permissions    String[]
+  isSystem       Boolean  @default(false) @map("is_system")
+
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members        OrganizationMember[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("org_roles")
 }
 
 // ============================================
@@ -151,6 +188,8 @@ enum AssetClassification {
   INTERNAL
   CONFIDENTIAL
   RESTRICTED
+
+  @@map("asset_classification")
 }
 
 enum AssetType {
@@ -161,43 +200,45 @@ enum AssetType {
   PERSONNEL
   FACILITY
   OTHER
+
+  @@map("asset_type")
 }
 
 model Asset {
   id              String              @id @default(uuid())
-  organizationId  String
+  organizationId  String              @map("organization_id")
   name            String
   description     String?
-  assetType       AssetType           @default(OTHER)
+  assetType       AssetType           @default(OTHER) @map("asset_type")
   classification  AssetClassification @default(INTERNAL)
   location        String?
   department      String?
-  
+
   // Version control
   version         Float               @default(0.1)
-  approvalStatus  ApprovalStatus      @default(DRAFT)
-  
+  approvalStatus  ApprovalStatus      @default(DRAFT) @map("approval_status")
+
   // CIA values (1-5 scale)
-  valueConfidentiality Int @default(3)
-  valueIntegrity       Int @default(3)
-  valueAvailability    Int @default(3)
-  
+  valueConfidentiality Int @default(3) @map("value_confidentiality")
+  valueIntegrity       Int @default(3) @map("value_integrity")
+  valueAvailability    Int @default(3) @map("value_availability")
+
   // Risk values with controls applied
-  riskConfidentiality  Int?
-  riskIntegrity        Int?
-  riskAvailability     Int?
-  
-  ownerId         String?
-  createdById     String
-  isActive        Boolean  @default(true)
-  
+  riskConfidentiality  Int? @map("risk_confidentiality")
+  riskIntegrity        Int? @map("risk_integrity")
+  riskAvailability     Int? @map("risk_availability")
+
+  ownerId         String?  @map("owner_id")
+  createdById     String   @map("created_by_id")
+  isActive        Boolean  @default(true) @map("is_active")
+
   // Retirement
-  isRetired       Boolean  @default(false)
-  retirementDate  DateTime?
-  retirementReason String?
-  
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  isRetired       Boolean  @default(false) @map("is_retired")
+  retirementDate  DateTime? @map("retirement_date")
+  retirementReason String?  @map("retirement_reason")
+
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   // Relations
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -212,25 +253,27 @@ model Asset {
   @@index([organizationId])
   @@index([ownerId])
   @@index([classification])
+  @@map("assets")
 }
 
 model AssetVersion {
-  id              String    @id @default(uuid())
-  assetId         String
-  version         Float
-  
-  description     String
-  actor           String
-  actorDesignation String?
-  action          String
-  assetData       Json
-  
-  createdAt       DateTime  @default(now())
+  id               String    @id @default(uuid())
+  assetId          String    @map("asset_id")
+  version          Float
 
-  asset           Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  description      String
+  actor            String
+  actorDesignation String?   @map("actor_designation")
+  action           String
+  assetData        Json      @map("asset_data")
+
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  asset            Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
   @@unique([assetId, version])
   @@index([assetId])
+  @@map("asset_versions")
 }
 
 // ============================================
@@ -243,6 +286,8 @@ enum RiskStatus {
   TREATING
   MONITORING
   CLOSED
+
+  @@map("risk_status")
 }
 
 enum RiskTreatmentType {
@@ -251,6 +296,8 @@ enum RiskTreatmentType {
   TRANSFER
   AVOID
   PENDING
+
+  @@map("risk_treatment_type")
 }
 
 enum ApprovalStatus {
@@ -259,6 +306,8 @@ enum ApprovalStatus {
   PENDING_SECOND_APPROVAL
   APPROVED
   REJECTED
+
+  @@map("approval_status")
 }
 
 enum RiskProbability {
@@ -267,6 +316,8 @@ enum RiskProbability {
   POSSIBLE
   LIKELY
   ALMOST_CERTAIN
+
+  @@map("risk_probability")
 }
 
 enum RiskImpactLevel {
@@ -275,54 +326,56 @@ enum RiskImpactLevel {
   MODERATE
   MAJOR
   CATASTROPHIC
+
+  @@map("risk_impact_level")
 }
 
 model Risk {
   id              String        @id @default(uuid())
-  organizationId  String
-  riskId          String        // Human-readable ID like "R.1", "R.2"
+  organizationId  String        @map("organization_id")
+  riskId          String        @map("risk_id")
   title           String
   description     String?
   category        String?
-  
+
   // Version control
   version         Float         @default(0.1)
-  approvalStatus  ApprovalStatus @default(DRAFT)
-  
+  approvalStatus  ApprovalStatus @default(DRAFT) @map("approval_status")
+
   // Enhanced risk scoring (numeric for calculation)
-  likelihood      Int           @default(3) // 1-5 (Probability)
-  impact          Int           @default(3) // 1-5 (Impact)
-  inherentRisk    Int?                      // Calculated: likelihood * impact
-  
-  residualProbability  Int?     // 1-5 (After treatment)
-  residualImpact       Int?     // 1-5 (After treatment)
-  residualRisk         Int?     // Calculated: residualProbability * residualImpact
-  
+  likelihood      Int           @default(3)
+  impact          Int           @default(3)
+  inherentRisk    Int?          @map("inherent_risk")
+
+  residualProbability  Int?     @map("residual_probability")
+  residualImpact       Int?     @map("residual_impact")
+  residualRisk         Int?     @map("residual_risk")
+
   // Control details
-  controlDescription String?
-  controlsReference  String?    // Reference to control IDs
-  
+  controlDescription String?    @map("control_description")
+  controlsReference  String?    @map("controls_reference")
+
   // Treatment
   treatment       RiskTreatmentType @default(PENDING)
-  treatmentPlan   String?
-  treatmentDueDate DateTime?
-  treatmentImplementationDate DateTime?
-  
+  treatmentPlan   String?       @map("treatment_plan")
+  treatmentDueDate DateTime?    @map("treatment_due_date")
+  treatmentImplementationDate DateTime? @map("treatment_implementation_date")
+
   status          RiskStatus    @default(IDENTIFIED)
-  ownerId         String?
-  createdById     String
-  
+  ownerId         String?       @map("owner_id")
+  createdById     String        @map("created_by_id")
+
   // Review tracking
-  reviewedAt      DateTime?
+  reviewedAt      DateTime?     @map("reviewed_at")
   comments        String?
-  
+
   // CIA impact flags
-  affectsConfidentiality Boolean @default(false)
-  affectsIntegrity       Boolean @default(false)
-  affectsAvailability    Boolean @default(false)
-  
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  affectsConfidentiality Boolean @default(false) @map("affects_confidentiality")
+  affectsIntegrity       Boolean @default(false) @map("affects_integrity")
+  affectsAvailability    Boolean @default(false) @map("affects_availability")
+
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
 
   // Relations
   organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -339,19 +392,21 @@ model Risk {
   @@index([organizationId])
   @@index([status])
   @@index([approvalStatus])
+  @@map("risks")
 }
 
 model RiskAsset {
   id        String   @id @default(uuid())
-  riskId    String
-  assetId   String
-  
-  createdAt DateTime @default(now())
+  riskId    String   @map("risk_id")
+  assetId   String   @map("asset_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
 
   risk      Risk     @relation(fields: [riskId], references: [id], onDelete: Cascade)
   asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
   @@unique([riskId, assetId])
+  @@map("risk_assets")
 }
 
 // ============================================
@@ -360,28 +415,29 @@ model RiskAsset {
 
 model RiskVersion {
   id                String    @id @default(uuid())
-  riskId            String
+  riskId            String    @map("risk_id")
   version           Float
-  
+
   // Change tracking
-  changeDescription String
-  actor             String    // User who made the change
-  actorDesignation  String?   // Role/designation of actor
-  action            String    // e.g., "Draft & Review", "1st Level Approval", "2nd Level Approval"
-  designation       String?   // For backward compatibility
-  
+  changeDescription String    @map("change_description")
+  actor             String
+  actorDesignation  String?   @map("actor_designation")
+  action            String
+  designation       String?
+
   // Snapshot of risk data at this version
-  riskData          Json      // Complete risk object at this version
-  
-  createdById       String?
-  approvedById      String?
-  
-  createdAt         DateTime  @default(now())
+  riskData          Json      @map("risk_data")
+
+  createdById       String?   @map("created_by_id")
+  approvedById      String?   @map("approved_by_id")
+
+  createdAt         DateTime  @default(now()) @map("created_at")
 
   risk              Risk      @relation(fields: [riskId], references: [id], onDelete: Cascade)
 
   @@unique([riskId, version])
   @@index([riskId])
+  @@map("risk_versions")
 }
 
 // ============================================
@@ -390,23 +446,24 @@ model RiskVersion {
 
 model RiskTreatment {
   id                        String    @id @default(uuid())
-  riskId                    String
-  
-  residualProbability       Int       // 1-5
-  residualImpact            Int       // 1-5
-  residualRisk              Int       // residualProbability * residualImpact
-  riskResponse              String    // Mitigate, Accept, Transfer, Avoid
-  controlDescription        String?
-  controlImplementationDate DateTime?
-  treatmentTimeInDays       Int?      // Days taken for treatment
+  riskId                    String    @map("risk_id")
+
+  residualProbability       Int       @map("residual_probability")
+  residualImpact            Int       @map("residual_impact")
+  residualRisk              Int       @map("residual_risk")
+  riskResponse              String    @map("risk_response")
+  controlDescription        String?   @map("control_description")
+  controlImplementationDate DateTime? @map("control_implementation_date")
+  treatmentTimeInDays       Int?      @map("treatment_time_in_days")
   comments                  String?
-  
-  createdAt                 DateTime  @default(now())
-  updatedAt                 DateTime  @updatedAt
+
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
 
   risk                      Risk      @relation(fields: [riskId], references: [id], onDelete: Cascade)
 
   @@index([riskId])
+  @@map("risk_treatments")
 }
 
 // ============================================
@@ -415,19 +472,20 @@ model RiskTreatment {
 
 model RiskRetirement {
   id          String    @id @default(uuid())
-  riskId      String    @unique
+  riskId      String    @unique @map("risk_id")
   reason      String
-  retiredById String
-  retiredAt   DateTime  @default(now())
-  
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  retiredById String    @map("retired_by_id")
+  retiredAt   DateTime  @default(now()) @map("retired_at")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
 
   risk        Risk      @relation(fields: [riskId], references: [id], onDelete: Cascade)
   retiredBy   User      @relation("RiskRetiredBy", fields: [retiredById], references: [id])
 
   @@index([riskId])
   @@index([retiredById])
+  @@map("risk_retirements")
 }
 
 // ============================================
@@ -436,23 +494,25 @@ model RiskRetirement {
 
 model ComplianceFramework {
   id          String   @id @default(uuid())
-  slug        String   @unique       // "iso27001", "iso42001", "dpdpa"
-  name        String                 // "ISO/IEC 27001:2022"
-  shortName   String                 // "ISO 27001"
+  slug        String   @unique
+  name        String
+  shortName   String   @map("short_name")
   version     String?
   description String?
-  icon        String?                // lucide icon name
-  color       String?                // hex color for theming
-  isActive    Boolean  @default(true)
-  sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  icon        String?
+  color       String?
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   // Relations
   controls    Control[]
+  exemptions  Exemption[]
 
   @@index([slug])
   @@index([isActive])
+  @@map("compliance_frameworks")
 }
 
 // ============================================
@@ -464,55 +524,57 @@ enum ImplementationStatus {
   PARTIALLY_IMPLEMENTED
   FULLY_IMPLEMENTED
   NOT_APPLICABLE
+
+  @@map("implementation_status")
 }
 
 model Control {
   id                  String               @id @default(uuid())
-  organizationId      String
-  controlId           String               // Control ID like "A.5.1", "42001.A.2.2", "DPDPA.S4"
+  organizationId      String               @map("organization_id")
+  controlId           String               @map("control_id")
   name                String
   description         String?
   objective           String?
-  category            String               // Category string e.g. "A5_ORGANIZATIONAL", "A6_AI_LIFECYCLE"
+  category            String
 
   // Framework relation
-  frameworkId          String?
+  frameworkId          String?              @map("framework_id")
 
   // Version control
   version             Float                @default(0.1)
-  approvalStatus      ApprovalStatus       @default(DRAFT)
+  approvalStatus      ApprovalStatus       @default(DRAFT) @map("approval_status")
 
   // Implementation tracking
-  implementationStatus ImplementationStatus @default(NOT_IMPLEMENTED)
-  implementationPercent Int                 @default(0) // 0-100
-  implementationNotes  String?
-  implementationDate   DateTime?
-  dueDate             DateTime?
+  implementationStatus ImplementationStatus @default(NOT_IMPLEMENTED) @map("implementation_status")
+  implementationPercent Int                 @default(0) @map("implementation_percent")
+  implementationNotes  String?              @map("implementation_notes")
+  implementationDate   DateTime?            @map("implementation_date")
+  dueDate             DateTime?             @map("due_date")
 
   // Maturity scoring (0-5)
   maturity            Int                  @default(0)
-  maturityComment     String?
+  maturityComment     String?              @map("maturity_comment")
 
   // Effectiveness (CIA impact reduction)
-  effectivenessConfidentiality Int @default(0)
-  effectivenessIntegrity       Int @default(0)
-  effectivenessAvailability    Int @default(0)
-  effectivenessProbability     Int @default(0)
+  effectivenessConfidentiality Int @default(0) @map("effectiveness_confidentiality")
+  effectivenessIntegrity       Int @default(0) @map("effectiveness_integrity")
+  effectivenessAvailability    Int @default(0) @map("effectiveness_availability")
+  effectivenessProbability     Int @default(0) @map("effectiveness_probability")
 
   // Standard reference (for custom controls)
-  isCustom            Boolean              @default(false)
-  standardRef         String?              // e.g., "ISO 27001:2022"
+  isCustom            Boolean              @default(false) @map("is_custom")
+  standardRef         String?              @map("standard_ref")
 
-  assigneeId          String?
-  createdById         String
+  assigneeId          String?              @map("assignee_id")
+  createdById         String               @map("created_by_id")
 
   // Retirement
-  isRetired           Boolean              @default(false)
-  retirementDate      DateTime?
-  retirementReason    String?
+  isRetired           Boolean              @default(false) @map("is_retired")
+  retirementDate      DateTime?            @map("retirement_date")
+  retirementReason    String?              @map("retirement_reason")
 
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
 
   // Relations
   organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -525,12 +587,14 @@ model Control {
   soaEntries          SoAEntry[]
   versions            ControlVersion[]
   checklistItems      ChecklistItem[]
+  exemptions          Exemption[]
 
   @@unique([organizationId, controlId])
   @@index([organizationId])
   @@index([category])
   @@index([implementationStatus])
   @@index([frameworkId])
+  @@map("controls")
 }
 
 // ============================================
@@ -539,22 +603,22 @@ model Control {
 
 model ChecklistItem {
   id              String    @id @default(uuid())
-  controlId       String
-  organizationId  String
+  controlId       String    @map("control_id")
+  organizationId  String    @map("organization_id")
   title           String
   description     String?
   guidance        String?
-  sortOrder       Int       @default(0)
+  sortOrder       Int       @default(0) @map("sort_order")
 
   // Implementation tracking
-  isCompleted     Boolean   @default(false)
-  completedAt     DateTime?
-  completedById   String?
+  isCompleted     Boolean   @default(false) @map("is_completed")
+  completedAt     DateTime? @map("completed_at")
+  completedById   String?   @map("completed_by_id")
   notes           String?
-  evidenceRef     String?
+  evidenceRef     String?   @map("evidence_ref")
 
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   // Relations
   control         Control   @relation(fields: [controlId], references: [id], onDelete: Cascade)
@@ -562,51 +626,55 @@ model ChecklistItem {
   @@index([controlId])
   @@index([organizationId])
   @@index([isCompleted])
+  @@map("checklist_items")
 }
 
 model ControlVersion {
-  id              String    @id @default(uuid())
-  controlId       String
-  version         Float
-  
-  description     String
-  actor           String
-  actorDesignation String?
-  action          String
-  controlData     Json
-  
-  createdAt       DateTime  @default(now())
+  id               String    @id @default(uuid())
+  controlId        String    @map("control_id")
+  version          Float
 
-  control         Control   @relation(fields: [controlId], references: [id], onDelete: Cascade)
+  description      String
+  actor            String
+  actorDesignation String?   @map("actor_designation")
+  action           String
+  controlData      Json      @map("control_data")
+
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  control          Control   @relation(fields: [controlId], references: [id], onDelete: Cascade)
 
   @@unique([controlId, version])
   @@index([controlId])
+  @@map("control_versions")
 }
 
 model ControlAsset {
   id        String   @id @default(uuid())
-  controlId String
-  assetId   String
-  
-  createdAt DateTime @default(now())
+  controlId String   @map("control_id")
+  assetId   String   @map("asset_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
 
   control   Control  @relation(fields: [controlId], references: [id], onDelete: Cascade)
   asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
   @@unique([controlId, assetId])
+  @@map("control_assets")
 }
 
 model RiskControl {
   id        String   @id @default(uuid())
-  riskId    String
-  controlId String
-  
-  createdAt DateTime @default(now())
+  riskId    String   @map("risk_id")
+  controlId String   @map("control_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
 
   risk      Risk     @relation(fields: [riskId], references: [id], onDelete: Cascade)
   control   Control  @relation(fields: [controlId], references: [id], onDelete: Cascade)
 
   @@unique([riskId, controlId])
+  @@map("risk_controls")
 }
 
 // ============================================
@@ -618,68 +686,90 @@ enum SoAStatus {
   IN_PROGRESS
   IMPLEMENTED
   NOT_APPLICABLE
+
+  @@map("soa_status")
 }
 
 model SoAEntry {
   id                      String         @id @default(uuid())
-  organizationId          String
-  controlId               String
-  riskId                  String?
+  organizationId          String         @map("organization_id")
+  controlId               String         @map("control_id")
+  riskId                  String?        @map("risk_id")
 
-  isApplicable            Boolean        @default(true)
+  isApplicable            Boolean        @default(true) @map("is_applicable")
   justification           String?
-  exclusionReason         String?        // If not applicable
+  exclusionReason         String?        @map("exclusion_reason")
 
   // Fields from SoA HTML structure
   status                  SoAStatus      @default(NOT_STARTED)
-  controlOwner            String?        // e.g., "CISO", "Head of TechOps"
-  documentationReferences String?        // Policy/procedure references
+  controlOwner            String?        @map("control_owner")
+  documentationReferences String?        @map("documentation_references")
   comments                String?
-  controlSource           String         @default("Annex A ISO 27001:2022")
+  controlSource           String         @default("Annex A ISO 27001:2022") @map("control_source")
 
-  // Version control (mirrors Risk pattern)
-  version                 Float          @default(0.1)
-  approvalStatus          ApprovalStatus @default(DRAFT)
-
-  createdAt               DateTime       @default(now())
-  updatedAt               DateTime       @updatedAt
+  createdAt               DateTime       @default(now()) @map("created_at")
+  updatedAt               DateTime       @updatedAt @map("updated_at")
 
   // Relations
   organization            Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   control                 Control        @relation(fields: [controlId], references: [id], onDelete: Cascade)
   risk                    Risk?          @relation(fields: [riskId], references: [id], onDelete: SetNull)
-  versions                SoAVersion[]
 
   @@unique([organizationId, controlId])
   @@index([organizationId])
-  @@index([approvalStatus])
+  @@map("soa_entries")
 }
 
 // ============================================
-// SOA VERSION HISTORY
+// SOA DOCUMENT (document-level versioning & approval)
+// ============================================
+
+model SoADocument {
+  id               String         @id @default(uuid())
+  organizationId   String         @unique @map("organization_id")
+  identification   String         @default("ISMS-R-001")
+  title            String         @default("ISMS - Statement of Applicability (SoA)")
+  classification   String         @default("Internal")
+  version          Float          @default(0.1)
+  approvalStatus   ApprovalStatus @default(DRAFT) @map("approval_status")
+  reviewerId       String?        @map("reviewer_id")
+  approverId       String?        @map("approver_id")
+
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  reviewer         User?          @relation("SoAReviewer", fields: [reviewerId], references: [id])
+  approver         User?          @relation("SoAApprover", fields: [approverId], references: [id])
+  versions         SoAVersion[]
+
+  @@map("soa_documents")
+}
+
+// ============================================
+// SOA VERSION HISTORY (document-level)
 // ============================================
 
 model SoAVersion {
-  id                String    @id @default(uuid())
-  soaEntryId        String
+  id                String       @id @default(uuid())
+  soaDocumentId     String       @map("soa_document_id")
   version           Float
 
-  changeDescription String
+  changeDescription String       @map("change_description")
   actor             String
-  actorDesignation  String?
-  action            String    // "Draft & Review", "1st Level Approval", "2nd Level Approval", "Updation"
+  actorDesignation  String?      @map("actor_designation")
+  action            String
 
-  soaData           Json      // Complete SoA entry snapshot at this version
+  createdById       String?      @map("created_by_id")
+  approvedById      String?      @map("approved_by_id")
 
-  createdById       String?
-  approvedById      String?
+  createdAt         DateTime     @default(now()) @map("created_at")
 
-  createdAt         DateTime  @default(now())
+  soaDocument       SoADocument  @relation(fields: [soaDocumentId], references: [id], onDelete: Cascade)
 
-  soaEntry          SoAEntry  @relation(fields: [soaEntryId], references: [id], onDelete: Cascade)
-
-  @@unique([soaEntryId, version])
-  @@index([soaEntryId])
+  @@unique([soaDocumentId, version])
+  @@index([soaDocumentId])
+  @@map("soa_versions")
 }
 
 // ============================================
@@ -688,45 +778,46 @@ model SoAVersion {
 
 model DriveFolder {
   id              String   @id @default(uuid())
-  organizationId  String
-  driveId         String   // Google Drive folder ID
+  organizationId  String   @map("organization_id")
+  driveId         String   @map("drive_id")
   name            String
-  folderType      String   @default("DOCUMENTS") // POLICIES, PROCEDURES, DOCUMENTS
-  parentDriveId   String?  // Parent Google Drive folder ID for nesting
+  folderType      String   @default("DOCUMENTS") @map("folder_type")
+  parentDriveId   String?  @map("parent_drive_id")
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   documents       DriveDocument[]
 
   @@unique([organizationId, driveId])
   @@index([organizationId])
+  @@map("drive_folders")
 }
 
 model DriveDocument {
   id              String   @id @default(uuid())
-  organizationId  String
-  folderId        String?
-  driveFileId     String   // Google Drive file ID
+  organizationId  String   @map("organization_id")
+  folderId        String?  @map("folder_id")
+  driveFileId     String   @map("drive_file_id")
   name            String
-  mimeType        String
+  mimeType        String   @map("mime_type")
   size            Int?
-  webViewLink     String?
-  webContentLink  String?
+  webViewLink     String?  @map("web_view_link")
+  webContentLink  String?  @map("web_content_link")
 
   // Sync metadata
-  driveModifiedAt DateTime?
-  lastSyncedAt    DateTime?
-  syncStatus      String   @default("PENDING") // PENDING, SYNCED, ERROR
+  driveModifiedAt DateTime? @map("drive_modified_at")
+  lastSyncedAt    DateTime? @map("last_synced_at")
+  syncStatus      String   @default("PENDING") @map("sync_status")
 
   // RAG processing
-  isIndexed       Boolean  @default(false)
-  indexedAt        DateTime?
-  chunkCount      Int      @default(0)
+  isIndexed       Boolean  @default(false) @map("is_indexed")
+  indexedAt       DateTime? @map("indexed_at")
+  chunkCount      Int      @default(0) @map("chunk_count")
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   folder          DriveFolder?   @relation(fields: [folderId], references: [id], onDelete: SetNull)
@@ -736,6 +827,7 @@ model DriveDocument {
   @@index([organizationId])
   @@index([driveFileId])
   @@index([syncStatus])
+  @@map("drive_documents")
 }
 
 // ============================================
@@ -744,21 +836,22 @@ model DriveDocument {
 
 model DocumentChunk {
   id              String   @id @default(uuid())
-  documentId      String
-  chunkIndex      Int      // Order within document
-  content         String   // The text content of this chunk
-  metadata        Json?    // Page number, section title, etc.
-  tokenCount      Int?
+  documentId      String   @map("document_id")
+  chunkIndex      Int      @map("chunk_index")
+  content         String
+  metadata        Json?
+  tokenCount      Int?     @map("token_count")
 
   // pgvector embedding (1536 dimensions for OpenAI text-embedding-3-small)
   embedding       Unsupported("vector(1536)")?
 
-  createdAt       DateTime @default(now())
+  createdAt       DateTime @default(now()) @map("created_at")
 
   document        DriveDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@unique([documentId, chunkIndex])
   @@index([documentId])
+  @@map("document_chunks")
 }
 
 // ============================================
@@ -770,24 +863,26 @@ enum AuditStatus {
   IN_PROGRESS
   COMPLETED
   CANCELLED
+
+  @@map("audit_status")
 }
 
 model Audit {
   id              String      @id @default(uuid())
-  organizationId  String
+  organizationId  String      @map("organization_id")
   title           String
   description     String?
-  auditType       String?     // Internal, External, Certification
-  
-  startDate       DateTime?
-  endDate         DateTime?
+  auditType       String?     @map("audit_type")
+
+  startDate       DateTime?   @map("start_date")
+  endDate         DateTime?   @map("end_date")
   status          AuditStatus @default(PLANNED)
-  
+
   findings        String?
   recommendations String?
-  
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
 
   // Relations
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -795,6 +890,7 @@ model Audit {
 
   @@index([organizationId])
   @@index([status])
+  @@map("audits")
 }
 
 enum IncidentSeverity {
@@ -802,6 +898,8 @@ enum IncidentSeverity {
   MEDIUM
   HIGH
   CRITICAL
+
+  @@map("incident_severity")
 }
 
 enum IncidentStatus {
@@ -810,40 +908,42 @@ enum IncidentStatus {
   CONTAINED
   RESOLVED
   CLOSED
+
+  @@map("incident_status")
 }
 
 model Incident {
   id              String           @id @default(uuid())
-  organizationId  String
-  incidentId      String           // Human-readable ID
+  organizationId  String           @map("organization_id")
+  incidentId      String           @map("incident_id")
   title           String
   description     String?
-  
+
   // Version control
   version         Float            @default(0.1)
-  approvalStatus  ApprovalStatus   @default(DRAFT)
-  
+  approvalStatus  ApprovalStatus   @default(DRAFT) @map("approval_status")
+
   severity        IncidentSeverity @default(MEDIUM)
   status          IncidentStatus   @default(REPORTED)
-  
-  reportedAt      DateTime         @default(now())
-  detectedAt      DateTime?
-  containedAt     DateTime?
-  resolvedAt      DateTime?
-  
-  rootCause       String?
-  lessonsLearned  String?
-  
-  createdById     String
-  assigneeId      String?
-  
+
+  reportedAt      DateTime         @default(now()) @map("reported_at")
+  detectedAt      DateTime?        @map("detected_at")
+  containedAt     DateTime?        @map("contained_at")
+  resolvedAt      DateTime?        @map("resolved_at")
+
+  rootCause       String?          @map("root_cause")
+  lessonsLearned  String?          @map("lessons_learned")
+
+  createdById     String           @map("created_by_id")
+  assigneeId      String?          @map("assignee_id")
+
   // Retirement
-  isRetired       Boolean          @default(false)
-  retirementDate  DateTime?
-  retirementReason String?
-  
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  isRetired       Boolean          @default(false) @map("is_retired")
+  retirementDate  DateTime?        @map("retirement_date")
+  retirementReason String?         @map("retirement_reason")
+
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
 
   // Relations
   organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -857,38 +957,41 @@ model Incident {
   @@index([organizationId])
   @@index([severity])
   @@index([status])
+  @@map("incidents")
 }
 
 model IncidentVersion {
-  id              String    @id @default(uuid())
-  incidentId      String
-  version         Float
-  
-  description     String
-  actor           String
-  actorDesignation String?
-  action          String
-  incidentData    Json
-  
-  createdAt       DateTime  @default(now())
+  id               String    @id @default(uuid())
+  incidentId       String    @map("incident_id")
+  version          Float
 
-  incident        Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  description      String
+  actor            String
+  actorDesignation String?   @map("actor_designation")
+  action           String
+  incidentData     Json      @map("incident_data")
+
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  incident         Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
 
   @@unique([incidentId, version])
   @@index([incidentId])
+  @@map("incident_versions")
 }
 
 model IncidentAsset {
   id         String   @id @default(uuid())
-  incidentId String
-  assetId    String
-  
-  createdAt  DateTime @default(now())
+  incidentId String   @map("incident_id")
+  assetId    String   @map("asset_id")
+
+  createdAt  DateTime @default(now()) @map("created_at")
 
   incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
   asset      Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
   @@unique([incidentId, assetId])
+  @@map("incident_assets")
 }
 
 // ============================================
@@ -899,6 +1002,8 @@ enum StorageProvider {
   MINIO
   GOOGLE_DRIVE
   LOCAL
+
+  @@map("storage_provider")
 }
 
 enum FileCategory {
@@ -908,34 +1013,36 @@ enum FileCategory {
   AUDIT_REPORT
   INCIDENT_EVIDENCE
   OTHER
+
+  @@map("file_category")
 }
 
 model FileUpload {
   id              String          @id @default(uuid())
-  organizationId  String
-  
-  fileName        String
-  originalName    String
-  mimeType        String
-  size            Int             // bytes
-  
-  storageProvider StorageProvider @default(MINIO)
-  storagePath     String          // S3 key or Google Drive file ID
-  storageUrl      String?         // Public URL if available
-  
+  organizationId  String          @map("organization_id")
+
+  fileName        String          @map("file_name")
+  originalName    String          @map("original_name")
+  mimeType        String          @map("mime_type")
+  size            Int
+
+  storageProvider StorageProvider @default(MINIO) @map("storage_provider")
+  storagePath     String          @map("storage_path")
+  storageUrl      String?         @map("storage_url")
+
   category        FileCategory    @default(OTHER)
   description     String?
-  
-  uploadedById    String
-  
+
+  uploadedById    String          @map("uploaded_by_id")
+
   // Optional relations to entities
-  assetId         String?
-  controlId       String?
-  auditId         String?
-  incidentId      String?
-  
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  assetId         String?         @map("asset_id")
+  controlId       String?         @map("control_id")
+  auditId         String?         @map("audit_id")
+  incidentId      String?         @map("incident_id")
+
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
 
   // Relations
   organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -948,6 +1055,7 @@ model FileUpload {
   @@index([organizationId])
   @@index([category])
   @@index([uploadedById])
+  @@map("file_uploads")
 }
 
 // ============================================
@@ -964,24 +1072,26 @@ enum AuditAction {
   IMPORT
   APPROVE
   REJECT
+
+  @@map("audit_action")
 }
 
 model AuditLog {
   id             String      @id @default(uuid())
-  userId         String?
-  organizationId String?
-  
+  userId         String?     @map("user_id")
+  organizationId String?     @map("organization_id")
+
   action         AuditAction
-  entityType     String      // e.g., "Asset", "Risk", "Policy"
-  entityId       String?
-  
-  oldValues      Json?
-  newValues      Json?
-  
-  ipAddress      String?
-  userAgent      String?
-  
-  createdAt      DateTime    @default(now())
+  entityType     String      @map("entity_type")
+  entityId       String?     @map("entity_id")
+
+  oldValues      Json?       @map("old_values")
+  newValues      Json?       @map("new_values")
+
+  ipAddress      String?     @map("ip_address")
+  userAgent      String?     @map("user_agent")
+
+  createdAt      DateTime    @default(now()) @map("created_at")
 
   // Relations
   user           User?       @relation("AuditLogUser", fields: [userId], references: [id], onDelete: SetNull)
@@ -990,6 +1100,7 @@ model AuditLog {
   @@index([organizationId])
   @@index([entityType, entityId])
   @@index([createdAt])
+  @@map("audit_logs")
 }
 
 // ============================================
@@ -998,23 +1109,24 @@ model AuditLog {
 
 model IncidentEmbedding {
   id             String   @id @default(uuid())
-  itopId         String
-  chunkIndex     Int      @default(0)
+  itopId         String   @map("itop_id")
+  chunkIndex     Int      @default(0) @map("chunk_index")
   ref            String
   title          String
   content        String   @db.Text
   embedding      Unsupported("vector(1536)")?
   metadata       Json
-  itopLastUpdate DateTime
-  organizationId String
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  itopLastUpdate DateTime @map("itop_last_update")
+  organizationId String   @map("organization_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([itopId, chunkIndex])
   @@index([organizationId])
   @@index([itopId])
+  @@map("incident_embeddings")
 }
 
 // ============================================
@@ -1023,23 +1135,106 @@ model IncidentEmbedding {
 
 model ChangeEmbedding {
   id             String   @id @default(uuid())
-  itopId         String
-  chunkIndex     Int      @default(0)
+  itopId         String   @map("itop_id")
+  chunkIndex     Int      @default(0) @map("chunk_index")
   ref            String
   title          String
   content        String   @db.Text
   embedding      Unsupported("vector(1536)")?
   metadata       Json
-  itopLastUpdate DateTime
-  organizationId String
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  itopLastUpdate DateTime @map("itop_last_update")
+  organizationId String   @map("organization_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([itopId, chunkIndex])
   @@index([organizationId])
   @@index([itopId])
+  @@map("change_embeddings")
+}
+
+// ============================================
+// CONTROL EXEMPTIONS
+// ============================================
+
+enum ExemptionType {
+  FULL
+  PARTIAL
+
+  @@map("exemption_type")
+}
+
+enum ExemptionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  UNDER_REVIEW
+
+  @@map("exemption_status")
+}
+
+model Exemption {
+  id                   String              @id @default(uuid())
+  organizationId       String              @map("organization_id")
+  exemptionId          String              @map("exemption_id")
+  title                String
+  controlId            String              @map("control_id")
+  frameworkId           String?             @map("framework_id")
+  requestedById        String              @map("requested_by_id")
+  exemptionType        ExemptionType       @default(FULL) @map("exemption_type")
+  justification        String              @db.Text
+  riskAcceptance       String?             @db.Text @map("risk_acceptance")
+  compensatingControls String?             @db.Text @map("compensating_controls")
+  validFrom            DateTime?           @map("valid_from")
+  validUntil           DateTime            @map("valid_until")
+  reviewDate           DateTime?           @map("review_date")
+  status               ExemptionStatus     @default(UNDER_REVIEW)
+  approvalStatus       ApprovalStatus      @default(DRAFT) @map("approval_status")
+  version              Float               @default(0.1)
+  comments             String?             @db.Text
+
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+
+  // Relations
+  organization         Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  control              Control             @relation(fields: [controlId], references: [id], onDelete: Cascade)
+  framework            ComplianceFramework? @relation(fields: [frameworkId], references: [id])
+  requestedBy          User                @relation("ExemptionRequestedBy", fields: [requestedById], references: [id])
+  versions             ExemptionVersion[]
+
+  @@unique([organizationId, exemptionId])
+  @@index([organizationId])
+  @@index([controlId])
+  @@index([status])
+  @@index([approvalStatus])
+  @@index([validUntil])
+  @@map("exemptions")
+}
+
+model ExemptionVersion {
+  id                String    @id @default(uuid())
+  exemptionId       String    @map("exemption_id")
+  version           Float
+
+  changeDescription String    @map("change_description")
+  actor             String
+  actorDesignation  String?   @map("actor_designation")
+  action            String
+  exemptionData     Json      @map("exemption_data")
+
+  createdById       String?   @map("created_by_id")
+  approvedById      String?   @map("approved_by_id")
+
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  exemption         Exemption @relation(fields: [exemptionId], references: [id], onDelete: Cascade)
+
+  @@unique([exemptionId, version])
+  @@index([exemptionId])
+  @@map("exemption_versions")
 }
 
 model SyncJob {
@@ -1049,9 +1244,206 @@ model SyncJob {
   progress       Int       @default(0)
   total          Int       @default(0)
   error          String?   @db.Text
-  organizationId String
-  startedAt      DateTime  @default(now())
-  completedAt    DateTime?
+  organizationId String    @map("organization_id")
+  startedAt      DateTime  @default(now()) @map("started_at")
+  completedAt    DateTime? @map("completed_at")
 
   @@index([organizationId, type])
+  @@map("sync_jobs")
+}
+
+// ============================================
+// NOTIFICATIONS
+// ============================================
+
+model Notification {
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  organizationId   String    @map("organization_id")
+  type             String    // soa_submitted, soa_approved_first, soa_approved_final, soa_rejected
+  title            String
+  message          String
+  link             String?
+  isRead           Boolean   @default(false) @map("is_read")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+// ============================================
+// REGULATORY ASSESSMENTS
+// ============================================
+
+enum AssessmentStatus {
+  DRAFT
+  IN_PROGRESS
+  UNDER_REVIEW
+  COMPLETED
+  ARCHIVED
+
+  @@map("assessment_status")
+}
+
+enum RequirementStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLIANT
+  PARTIALLY_COMPLIANT
+  NON_COMPLIANT
+  NOT_APPLICABLE
+
+  @@map("requirement_status")
+}
+
+enum FindingSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFORMATIONAL
+
+  @@map("finding_severity")
+}
+
+enum FindingStatus {
+  OPEN
+  IN_REMEDIATION
+  REMEDIATED
+  ACCEPTED
+  CLOSED
+
+  @@map("finding_status")
+}
+
+model Assessment {
+  id               String           @id @default(uuid())
+  organizationId   String           @map("organization_id")
+  title            String
+  description      String?
+  clientName       String?          @map("client_name")
+  assessorName     String?          @map("assessor_name")
+  status           AssessmentStatus @default(DRAFT)
+
+  // Phase tracking (1-4)
+  currentPhase     Int              @default(1) @map("current_phase")
+
+  // Scope - which framework slugs included (JSON array of strings)
+  frameworkSlugs   Json             @default("[]") @map("framework_slugs")
+
+  startDate        DateTime?        @map("start_date")
+  targetEndDate    DateTime?        @map("target_end_date")
+  completedDate    DateTime?        @map("completed_date")
+
+  createdById      String           @map("created_by_id")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  // Relations
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requirements     AssessmentRequirement[]
+  findings         AssessmentFinding[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@map("assessments_v2")
+}
+
+model AssessmentRequirement {
+  id               String            @id @default(uuid())
+  assessmentId     String            @map("assessment_id")
+
+  // Framework identification
+  frameworkSlug    String             @map("framework_slug")
+  domainCode      String             @map("domain_code")
+  domainName      String             @map("domain_name")
+  requirementCode String             @map("requirement_code")
+  title           String
+  description     String?            @db.Text
+
+  // Guidance for the assessor
+  guidance        String?            @db.Text
+  evidenceHint    String?            @map("evidence_hint") @db.Text
+
+  sortOrder       Int                @default(0) @map("sort_order")
+
+  // Assessment results
+  status          RequirementStatus  @default(NOT_STARTED)
+  assessorNotes   String?            @map("assessor_notes") @db.Text
+  findings        String?            @db.Text
+  riskLevel       String?            @map("risk_level")
+
+  assessedAt      DateTime?          @map("assessed_at")
+  assessedById    String?            @map("assessed_by_id")
+
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  // Relations
+  assessment      Assessment         @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  evidence        AssessmentEvidence[]
+
+  @@index([assessmentId])
+  @@index([frameworkSlug])
+  @@index([status])
+  @@map("assessment_requirements")
+}
+
+model AssessmentEvidence {
+  id               String   @id @default(uuid())
+  requirementId    String   @map("requirement_id")
+  fileUploadId     String?  @map("file_upload_id")
+
+  title            String
+  description      String?
+  evidenceType     String   @default("document") @map("evidence_type")
+  link             String?
+
+  collectedAt      DateTime @default(now()) @map("collected_at")
+  collectedById    String?  @map("collected_by_id")
+
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  // Relations
+  requirement      AssessmentRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@index([requirementId])
+  @@map("assessment_evidence")
+}
+
+model AssessmentFinding {
+  id               String          @id @default(uuid())
+  assessmentId     String          @map("assessment_id")
+  requirementId    String?         @map("requirement_id")
+
+  findingRef       String          @map("finding_ref")
+  title            String
+  description      String          @db.Text
+  frameworkSlug    String?          @map("framework_slug")
+
+  severity         FindingSeverity  @default(MEDIUM)
+  likelihood       Int              @default(3)
+  impact           Int              @default(3)
+  riskScore        Int?             @map("risk_score")
+
+  recommendation   String?          @db.Text
+  remediationPlan  String?          @map("remediation_plan") @db.Text
+  targetDate       DateTime?        @map("target_date")
+  ownerId          String?          @map("owner_id")
+  status           FindingStatus    @default(OPEN)
+
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  // Relations
+  assessment       Assessment       @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId])
+  @@index([severity])
+  @@index([status])
+  @@map("assessment_findings")
 }

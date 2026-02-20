@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.js';
+import { authenticate, requirePermission } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { paginationQuery } from '../middleware/validators.js';
 import { itopService } from '../services/itop.service.js';
@@ -11,10 +11,10 @@ const router = Router();
 router.get(
   '/',
   authenticate,
+  requirePermission('incidents', 'view'),
   paginationQuery,
   validate,
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const {
       page = 1,
       limit = 50,
@@ -28,14 +28,6 @@ router.get(
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    // Check membership
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const result = await itopService.getIncidents({
@@ -72,20 +64,12 @@ router.get(
 router.get(
   '/stats',
   authenticate,
+  requirePermission('incidents', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId } = req.query;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    // Check membership
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const stats = await itopService.getIncidentStats();

@@ -6,12 +6,17 @@ import { LoginPage } from '@/pages/auth/LoginPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { AssetsPage } from '@/pages/AssetsPage'
 import RisksPageEnhanced from '@/pages/RisksPageEnhanced'
+import { AddRiskPage } from '@/pages/AddRiskPage'
 import { FrameworksPage } from '@/pages/FrameworksPage'
 import { FrameworkControlsPage } from '@/pages/FrameworkControlsPage'
 import { PoliciesPage } from '@/pages/PoliciesPage'
 import { SoAPage } from '@/pages/SoAPage'
 import { IncidentsPage } from '@/pages/IncidentsPage'
 import { ChangesPage } from '@/pages/ChangesPage'
+import { ExemptionsPage } from '@/pages/ExemptionsPage'
+import { RequestExemptionPage } from '@/pages/RequestExemptionPage'
+import { AssessmentsPage } from '@/pages/AssessmentsPage'
+import AssessmentConductPage from '@/pages/AssessmentConductPage'
 import { AuditLogPage } from '@/pages/AuditLogPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { UserManagementPage } from '@/pages/UserManagementPage'
@@ -48,6 +53,21 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function PermissionGate({ module, children }: { module: string; children: React.ReactNode }) {
+  const hasPermission = useAuthStore(state => state.hasPermission)
+
+  if (!hasPermission(module, 'view')) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] text-center">
+        <h2 className="text-2xl font-bold mb-2">Access Denied</h2>
+        <p className="text-muted-foreground">You do not have permission to access this module.</p>
+      </div>
+    )
+  }
+
+  return <>{children}</>
+}
+
 function App() {
   return (
     <>
@@ -66,19 +86,24 @@ function App() {
           }
         >
           <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<DashboardPage />} />
-          <Route path="assets" element={<AssetsPage />} />
-          <Route path="risks" element={<RisksPageEnhanced />} />
+          <Route path="dashboard" element={<PermissionGate module="dashboard"><DashboardPage /></PermissionGate>} />
+          <Route path="assets" element={<PermissionGate module="assets"><AssetsPage /></PermissionGate>} />
+          <Route path="risks" element={<PermissionGate module="risks"><RisksPageEnhanced /></PermissionGate>} />
+          <Route path="risks/new" element={<PermissionGate module="risks"><AddRiskPage /></PermissionGate>} />
           <Route path="controls" element={<Navigate to="/frameworks" replace />} />
-          <Route path="frameworks" element={<FrameworksPage />} />
-          <Route path="frameworks/:slug" element={<FrameworkControlsPage />} />
-          <Route path="policies" element={<PoliciesPage />} />
-          <Route path="soa" element={<SoAPage />} />
-          <Route path="incidents" element={<IncidentsPage />} />
-          <Route path="changes" element={<ChangesPage />} />
-          <Route path="audit-log" element={<AuditLogPage />} />
-          <Route path="users" element={<UserManagementPage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          <Route path="frameworks" element={<PermissionGate module="frameworks"><FrameworksPage /></PermissionGate>} />
+          <Route path="frameworks/:slug" element={<PermissionGate module="frameworks"><FrameworkControlsPage /></PermissionGate>} />
+          <Route path="policies" element={<PermissionGate module="policies"><PoliciesPage /></PermissionGate>} />
+          <Route path="soa" element={<PermissionGate module="soa"><SoAPage /></PermissionGate>} />
+          <Route path="incidents" element={<PermissionGate module="incidents"><IncidentsPage /></PermissionGate>} />
+          <Route path="changes" element={<PermissionGate module="changes"><ChangesPage /></PermissionGate>} />
+          <Route path="exemptions" element={<PermissionGate module="exemptions"><ExemptionsPage /></PermissionGate>} />
+          <Route path="exemptions/new" element={<PermissionGate module="exemptions"><RequestExemptionPage /></PermissionGate>} />
+          <Route path="assessments" element={<PermissionGate module="assessments"><AssessmentsPage /></PermissionGate>} />
+          <Route path="assessments/:id" element={<PermissionGate module="assessments"><AssessmentConductPage /></PermissionGate>} />
+          <Route path="audit-log" element={<PermissionGate module="audit_log"><AuditLogPage /></PermissionGate>} />
+          <Route path="users" element={<PermissionGate module="users"><UserManagementPage /></PermissionGate>} />
+          <Route path="settings" element={<PermissionGate module="settings"><SettingsPage /></PermissionGate>} />
         </Route>
 
         {/* Catch all */}

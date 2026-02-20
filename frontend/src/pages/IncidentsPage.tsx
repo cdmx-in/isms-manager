@@ -190,7 +190,8 @@ export function IncidentsPage() {
       const result = await api.incidentKnowledge.sync(currentOrganizationId, mode)
       setSyncJobId(result.jobId)
     } catch (err: any) {
-      const message = err?.response?.data?.error || err?.message || 'Sync failed'
+      const errorData = err?.response?.data?.error
+      const message = (typeof errorData === 'string' ? errorData : errorData?.message) || err?.message || 'Sync failed'
       setSyncError(message)
       setTimeout(() => setSyncError(null), 10000)
     }
@@ -369,7 +370,9 @@ export function IncidentsPage() {
               {(syncJobId || kbStatus?.lastSync?.status === 'running') && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Syncing {syncJob ? `${syncJob.progress}/${syncJob.total}` : '...'}
+                  {syncJob?.total > 0
+                    ? `Syncing ${syncJob.progress.toLocaleString()}/${syncJob.total.toLocaleString()}`
+                    : 'Syncing...'}
                 </div>
               )}
               {syncError && (
@@ -434,6 +437,16 @@ export function IncidentsPage() {
               <Progress value={(syncJob.progress / syncJob.total) * 100} className="h-2" />
               <p className="text-xs text-muted-foreground mt-1">
                 Processing {syncJob.progress.toLocaleString()} of {syncJob.total.toLocaleString()} incidents...
+              </p>
+            </div>
+          )}
+          {/* Incomplete sync warning */}
+          {!syncJobId && kbStatus?.incompleteSync && (
+            <div className="mt-3 flex items-start gap-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                Knowledge base incomplete: {kbStatus.incompleteSync.progress.toLocaleString()} of {kbStatus.incompleteSync.total.toLocaleString()} incidents indexed.
+                {' '}Click <strong>Sync New</strong> to automatically resume indexing the remaining incidents.
               </p>
             </div>
           )}

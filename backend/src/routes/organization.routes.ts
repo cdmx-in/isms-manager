@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../index.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { authenticate, authorize, requireOrgMembership, requireOrgRole, AuthenticatedRequest } from '../middleware/auth.js';
+import { authenticate, requirePermission, AuthenticatedRequest } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { createOrganizationValidator, uuidParam, paginationQuery } from '../middleware/validators.js';
 import { createAuditLog } from '../services/audit.service.js';
@@ -138,7 +138,7 @@ router.get(
   authenticate,
   uuidParam('organizationId'),
   validate,
-  requireOrgMembership,
+  requirePermission('settings', 'view'),
   asyncHandler(async (req, res) => {
     const { organizationId } = req.params;
 
@@ -154,6 +154,7 @@ router.get(
                 firstName: true,
                 lastName: true,
                 avatar: true,
+                designation: true,
               },
             },
           },
@@ -186,8 +187,7 @@ router.patch(
   authenticate,
   uuidParam('organizationId'),
   validate,
-  requireOrgMembership,
-  requireOrgRole('ADMIN', 'LOCAL_ADMIN'),
+  requirePermission('settings', 'edit'),
   asyncHandler(async (req, res) => {
     const { organizationId } = req.params;
     const authReq = req as AuthenticatedRequest;
@@ -236,8 +236,7 @@ router.post(
   authenticate,
   uuidParam('organizationId'),
   validate,
-  requireOrgMembership,
-  requireOrgRole('ADMIN', 'LOCAL_ADMIN'),
+  requirePermission('users', 'edit'),
   asyncHandler(async (req, res) => {
     const { organizationId } = req.params;
     const authReq = req as AuthenticatedRequest;
@@ -310,12 +309,11 @@ router.patch(
   uuidParam('organizationId'),
   uuidParam('memberId'),
   validate,
-  requireOrgMembership,
-  requireOrgRole('ADMIN', 'LOCAL_ADMIN'),
+  requirePermission('users', 'edit'),
   asyncHandler(async (req, res) => {
     const { organizationId, memberId } = req.params;
     const authReq = req as AuthenticatedRequest;
-    const { role } = req.body;
+    const { role, orgRoleId } = req.body;
 
     const membership = await prisma.organizationMember.findFirst({
       where: {
@@ -329,7 +327,7 @@ router.patch(
     }
 
     // Prevent removing last admin
-    if (membership.role === 'ADMIN' && role !== 'ADMIN') {
+    if (role && membership.role === 'ADMIN' && role !== 'ADMIN') {
       const adminCount = await prisma.organizationMember.count({
         where: {
           organizationId,
@@ -342,9 +340,23 @@ router.patch(
       }
     }
 
+    // Validate orgRoleId belongs to this organization
+    if (orgRoleId) {
+      const orgRole = await prisma.orgRole.findFirst({
+        where: { id: orgRoleId, organizationId },
+      });
+      if (!orgRole) {
+        throw new AppError('Role not found in this organization', 404);
+      }
+    }
+
+    const updateData: any = {};
+    if (role !== undefined) updateData.role = role;
+    if (orgRoleId !== undefined) updateData.orgRoleId = orgRoleId || null;
+
     const updatedMembership = await prisma.organizationMember.update({
       where: { id: memberId },
-      data: { role },
+      data: updateData,
       include: {
         user: {
           select: {
@@ -383,8 +395,7 @@ router.delete(
   uuidParam('organizationId'),
   uuidParam('memberId'),
   validate,
-  requireOrgMembership,
-  requireOrgRole('ADMIN', 'LOCAL_ADMIN'),
+  requirePermission('users', 'edit'),
   asyncHandler(async (req, res) => {
     const { organizationId, memberId } = req.params;
     const authReq = req as AuthenticatedRequest;

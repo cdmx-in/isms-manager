@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../index.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.js';
+import { authenticate, requirePermission } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { paginationQuery } from '../middleware/validators.js';
 
@@ -11,10 +11,10 @@ const router = Router();
 router.get(
   '/',
   authenticate,
+  requirePermission('audit_log', 'view'),
   paginationQuery,
   validate,
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const {
       page = 1,
       limit = 50,
@@ -31,18 +31,6 @@ router.get(
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    // Check membership - only admins and auditors can view audit logs
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
-
-    if (membership && !['ADMIN', 'LOCAL_ADMIN', 'AUDITOR'].includes(membership.role)) {
-      throw new AppError('Only admins and auditors can view audit logs', 403);
     }
 
     const where: any = { organizationId };
@@ -88,24 +76,12 @@ router.get(
 router.get(
   '/stats',
   authenticate,
+  requirePermission('audit_log', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId, days = 30 } = req.query;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    // Check membership
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
-
-    if (membership && !['ADMIN', 'LOCAL_ADMIN', 'AUDITOR'].includes(membership.role)) {
-      throw new AppError('Only admins and auditors can view audit stats', 403);
     }
 
     const startDate = new Date();
@@ -172,8 +148,8 @@ router.get(
 router.get(
   '/export',
   authenticate,
+  requirePermission('audit_log', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const {
       organizationId,
       format = 'json',
@@ -183,18 +159,6 @@ router.get(
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    // Check membership
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
-
-    if (membership && !['ADMIN', 'LOCAL_ADMIN', 'AUDITOR'].includes(membership.role)) {
-      throw new AppError('Only admins and auditors can export audit logs', 403);
     }
 
     const where: any = { organizationId };

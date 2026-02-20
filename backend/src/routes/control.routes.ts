@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../index.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.js';
+import { authenticate, requirePermission, AuthenticatedRequest } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { updateControlValidator, uuidParam, paginationQuery } from '../middleware/validators.js';
 import { createAuditLog } from '../services/audit.service.js';
@@ -12,10 +12,10 @@ const router = Router();
 router.get(
   '/',
   authenticate,
+  requirePermission('frameworks', 'view'),
   paginationQuery,
   validate,
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const {
       page = 1,
       limit = 20,
@@ -30,14 +30,6 @@ router.get(
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    // Check membership
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const where: any = { organizationId };
@@ -100,20 +92,12 @@ router.get(
 router.get(
   '/categories',
   authenticate,
+  requirePermission('frameworks', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId } = req.query;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    // Check membership
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const categories = await prisma.control.groupBy({
@@ -314,6 +298,7 @@ router.patch(
 router.post(
   '/',
   authenticate,
+  requirePermission('frameworks', 'edit'),
   asyncHandler(async (req, res) => {
     const authReq = req as AuthenticatedRequest;
     const {
@@ -324,18 +309,6 @@ router.post(
       objective,
       category,
     } = req.body;
-
-    // Check membership
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
-
-    if (membership && !['ADMIN', 'LOCAL_ADMIN', 'AUDITOR'].includes(membership.role)) {
-      throw new AppError('Only admins and auditors can create custom controls', 403);
-    }
 
     // Check if controlId is unique within organization
     const existing = await prisma.control.findUnique({

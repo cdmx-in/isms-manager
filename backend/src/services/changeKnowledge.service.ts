@@ -86,7 +86,7 @@ export async function startSync(organizationId: string, mode: 'full' | 'incremen
     return { jobId: existing.id, reused: true };
   }
 
-  const COOLDOWN_MS = 5 * 60 * 1000;
+  const COOLDOWN_MS = 30 * 1000;
   const recentJob = await prisma.syncJob.findFirst({
     where: {
       organizationId,
@@ -104,7 +104,7 @@ export async function startSync(organizationId: string, mode: 'full' | 'incremen
   let afterDate: string | undefined;
   if (mode === 'incremental') {
     const latest: any[] = await prisma.$queryRaw`
-      SELECT MAX("itopLastUpdate") as max_date FROM "ChangeEmbedding" WHERE "organizationId" = ${organizationId}
+      SELECT MAX("itop_last_update") as max_date FROM "change_embeddings" WHERE "organization_id" = ${organizationId}
     `;
     if (latest[0]?.max_date) {
       afterDate = new Date(latest[0].max_date).toISOString().replace('T', ' ').replace('Z', '').slice(0, 19);
@@ -114,11 +114,7 @@ export async function startSync(organizationId: string, mode: 'full' | 'incremen
     }
   }
 
-  const oqlConditions = ['org_id=2'];
-  if (afterDate) {
-    oqlConditions.push(`last_update > "${afterDate}"`);
-  }
-  const oql = `SELECT Change WHERE ${oqlConditions.join(' AND ')}`;
+  const oql = itopService.buildSyncOql('Change', afterDate);
   const total = await itopService.getChangeCountPublic(oql);
 
   const job = await prisma.syncJob.create({
@@ -188,7 +184,7 @@ async function processBatch(
 
     try {
       await prisma.$executeRaw`
-        INSERT INTO "ChangeEmbedding" (id, "itopId", "chunkIndex", ref, title, content, embedding, metadata, "itopLastUpdate", "organizationId", "createdAt", "updatedAt")
+        INSERT INTO "change_embeddings" (id, "itop_id", "chunk_index", ref, title, content, embedding, metadata, "itop_last_update", "organization_id", "created_at", "updated_at")
         VALUES (
           gen_random_uuid(),
           ${change.itopId},
@@ -203,14 +199,14 @@ async function processBatch(
           NOW(),
           NOW()
         )
-        ON CONFLICT ("itopId", "chunkIndex") DO UPDATE SET
+        ON CONFLICT ("itop_id", "chunk_index") DO UPDATE SET
           content = EXCLUDED.content,
           embedding = EXCLUDED.embedding,
           metadata = EXCLUDED.metadata,
-          "itopLastUpdate" = EXCLUDED."itopLastUpdate",
+          "itop_last_update" = EXCLUDED."itop_last_update",
           ref = EXCLUDED.ref,
           title = EXCLUDED.title,
-          "updatedAt" = NOW()
+          "updated_at" = NOW()
       `;
     } catch (err: any) {
       logger.error(`Failed to upsert change ${change.ref} chunk ${chunkIndex}:`, err.message);
@@ -286,10 +282,10 @@ export async function getSyncJobStatus(jobId: string) {
 export async function getKnowledgeBaseStatus(organizationId: string) {
   const [indexedCount, totalChunks, lastJob] = await Promise.all([
     prisma.$queryRaw<[{ count: bigint }]>`
-      SELECT COUNT(DISTINCT "itopId") as count FROM "ChangeEmbedding" WHERE "organizationId" = ${organizationId}
+      SELECT COUNT(DISTINCT "itop_id") as count FROM "change_embeddings" WHERE "organization_id" = ${organizationId}
     `,
     prisma.$queryRaw<[{ count: bigint }]>`
-      SELECT COUNT(*) as count FROM "ChangeEmbedding" WHERE "organizationId" = ${organizationId}
+      SELECT COUNT(*) as count FROM "change_embeddings" WHERE "organization_id" = ${organizationId}
     `,
     prisma.syncJob.findFirst({
       where: { organizationId, type: 'change_embedding' },
@@ -335,11 +331,11 @@ export async function searchChanges(
   const vectorStr = `[${embeddings[0].join(',')}]`;
 
   const results = await prisma.$queryRaw<ChangeSearchResult[]>`
-    SELECT ce."itopId", ce.ref, ce.title, ce.content,
+    SELECT ce."itop_id" as "itopId", ce.ref, ce.title, ce.content,
       1 - (ce.embedding <=> ${vectorStr}::vector) as similarity,
-      ce.metadata, ce."chunkIndex"
-    FROM "ChangeEmbedding" ce
-    WHERE ce."organizationId" = ${organizationId}
+      ce.metadata, ce."chunk_index" as "chunkIndex"
+    FROM "change_embeddings" ce
+    WHERE ce."organization_id" = ${organizationId}
       AND ce.embedding IS NOT NULL
     ORDER BY ce.embedding <=> ${vectorStr}::vector
     LIMIT ${limit}
@@ -361,8 +357,8 @@ export async function findSimilarChanges(
   limit: number = 5
 ): Promise<ChangeSearchResult[]> {
   const sourceCheck = await prisma.$queryRaw<Array<{ count: bigint }>>`
-    SELECT COUNT(*) as count FROM "ChangeEmbedding"
-    WHERE "itopId" = ${itopId} AND "chunkIndex" = 0 AND embedding IS NOT NULL
+    SELECT COUNT(*) as count FROM "change_embeddings"
+    WHERE "itop_id" = ${itopId} AND "chunk_index" = 0 AND embedding IS NOT NULL
   `;
 
   if (!sourceCheck[0] || Number(sourceCheck[0].count) === 0) {
@@ -370,15 +366,15 @@ export async function findSimilarChanges(
   }
 
   const results = await prisma.$queryRaw<ChangeSearchResult[]>`
-    SELECT ce."itopId", ce.ref, ce.title, ce.content,
-      1 - (ce.embedding <=> (SELECT embedding FROM "ChangeEmbedding" WHERE "itopId" = ${itopId} AND "chunkIndex" = 0 LIMIT 1)) as similarity,
-      ce.metadata, ce."chunkIndex"
-    FROM "ChangeEmbedding" ce
-    WHERE ce."organizationId" = ${organizationId}
-      AND ce."itopId" != ${itopId}
-      AND ce."chunkIndex" = 0
+    SELECT ce."itop_id" as "itopId", ce.ref, ce.title, ce.content,
+      1 - (ce.embedding <=> (SELECT embedding FROM "change_embeddings" WHERE "itop_id" = ${itopId} AND "chunk_index" = 0 LIMIT 1)) as similarity,
+      ce.metadata, ce."chunk_index" as "chunkIndex"
+    FROM "change_embeddings" ce
+    WHERE ce."organization_id" = ${organizationId}
+      AND ce."itop_id" != ${itopId}
+      AND ce."chunk_index" = 0
       AND ce.embedding IS NOT NULL
-    ORDER BY ce.embedding <=> (SELECT embedding FROM "ChangeEmbedding" WHERE "itopId" = ${itopId} AND "chunkIndex" = 0 LIMIT 1)
+    ORDER BY ce.embedding <=> (SELECT embedding FROM "change_embeddings" WHERE "itop_id" = ${itopId} AND "chunk_index" = 0 LIMIT 1)
     LIMIT ${limit}
   `;
 

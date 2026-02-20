@@ -15,27 +15,35 @@ import {
   Layers,
   Users,
   GitBranch,
+  ShieldOff,
+  ClipboardList,
 } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { useAuthStore } from '@/stores/auth.store'
 
 const navItems = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { name: 'Frameworks', href: '/frameworks', icon: Layers },
-  { name: 'Assets', href: '/assets', icon: Server },
-  { name: 'Risks', href: '/risks', icon: AlertTriangle },
-  { name: 'Policies', href: '/policies', icon: FileText },
-  { name: 'Statement of Applicability', href: '/soa', icon: ClipboardCheck },
-  { name: 'Incidents', href: '/incidents', icon: AlertCircle },
-  { name: 'Changes', href: '/changes', icon: GitBranch },
-  { name: 'Audit Log', href: '/audit-log', icon: History },
-  { name: 'Users', href: '/users', icon: Users },
-  { name: 'Settings', href: '/settings', icon: Settings },
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, module: 'dashboard' },
+  { name: 'Frameworks', href: '/frameworks', icon: Layers, module: 'frameworks' },
+  { name: 'Assets', href: '/assets', icon: Server, module: 'assets' },
+  { name: 'Risks', href: '/risks', icon: AlertTriangle, module: 'risks' },
+  { name: 'Policies', href: '/policies', icon: FileText, module: 'policies' },
+  { name: 'Statement of Applicability', href: '/soa', icon: ClipboardCheck, module: 'soa' },
+  { name: 'Incidents', href: '/incidents', icon: AlertCircle, module: 'incidents' },
+  { name: 'Changes', href: '/changes', icon: GitBranch, module: 'changes' },
+  { name: 'Exemptions', href: '/exemptions', icon: ShieldOff, module: 'exemptions' },
+  { name: 'Assessments', href: '/assessments', icon: ClipboardList, module: 'assessments' },
+  { name: 'Audit Log', href: '/audit-log', icon: History, module: 'audit_log' },
+  { name: 'Users', href: '/users', icon: Users, module: 'users' },
+  { name: 'Settings', href: '/settings', icon: Settings, module: 'settings' },
 ]
 
 export function Sidebar() {
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
+  const hasPermission = useAuthStore(state => state.hasPermission)
+
+  const visibleNavItems = navItems.filter(item => hasPermission(item.module, 'view'))
 
   return (
     <aside
@@ -61,7 +69,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 p-2">
-        {navItems.map((item) => {
+        {visibleNavItems.map((item) => {
           const isActive = location.pathname === item.href || location.pathname.startsWith(item.href + '/')
           return (
             <Link

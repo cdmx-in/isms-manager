@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../index.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.js';
+import { authenticate, requirePermission, AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -152,8 +152,8 @@ const FRAMEWORK_CHECKLIST_MAP: { [key: string]: typeof ISO_27001_CHECKLIST_ITEMS
 router.get(
   '/controls/:id/checklist',
   authenticate,
+  requirePermission('frameworks', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { id } = req.params;
     const { organizationId } = req.query;
 
@@ -169,14 +169,6 @@ router.get(
 
     if (!control) {
       throw new AppError('Control not found', 404);
-    }
-
-    // Check membership
-    const membership = authReq.user.organizationMemberships.find(
-      (m) => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const checklistItems = await prisma.checklistItem.findMany({
@@ -209,6 +201,7 @@ router.get(
 router.post(
   '/controls/:id/checklist/initialize',
   authenticate,
+  requirePermission('frameworks', 'edit'),
   asyncHandler(async (req, res) => {
     const authReq = req as AuthenticatedRequest;
     const { id } = req.params;
@@ -216,18 +209,6 @@ router.post(
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    // Check membership
-    const membership = authReq.user.organizationMemberships.find(
-      (m) => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
-
-    if (membership && !['ADMIN', 'LOCAL_ADMIN', 'AUDITOR'].includes(membership.role)) {
-      throw new AppError('Only admins and auditors can initialize checklists', 403);
     }
 
     // Verify the control exists and get its framework
@@ -348,21 +329,13 @@ router.patch(
 router.get(
   '/frameworks/:slug/checklist-progress',
   authenticate,
+  requirePermission('frameworks', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { slug } = req.params;
     const { organizationId } = req.query;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    // Check membership
-    const membership = authReq.user.organizationMemberships.find(
-      (m) => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const framework = await prisma.complianceFramework.findUnique({

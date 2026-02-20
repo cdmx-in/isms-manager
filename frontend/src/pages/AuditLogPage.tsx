@@ -38,6 +38,8 @@ import {
   FileText,
   AlertTriangle,
   Server,
+  CheckCircle,
+  XCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -48,6 +50,8 @@ const actionIcons: Record<string, React.ElementType> = {
   VIEW: Eye,
   LOGIN: LogIn,
   LOGOUT: LogOut,
+  APPROVE: CheckCircle,
+  REJECT: XCircle,
   SETTINGS_CHANGE: Settings,
   CONTROL_UPDATE: Shield,
   POLICY_CHANGE: FileText,
@@ -62,20 +66,30 @@ const actionColors: Record<string, string> = {
   VIEW: 'text-gray-500',
   LOGIN: 'text-green-500',
   LOGOUT: 'text-yellow-500',
+  APPROVE: 'text-green-600',
+  REJECT: 'text-red-600',
 }
 
 const entityTypes = [
-  'USER',
-  'ASSET',
-  'RISK',
-  'CONTROL',
-  'POLICY',
-  'INCIDENT',
-  'SOA',
-  'ORGANIZATION',
+  'User',
+  'Asset',
+  'Risk',
+  'Control',
+  'SoA',
+  'SoADocument',
+  'Organization',
+  'OrganizationMember',
+  'Exemption',
+  'Incident',
 ]
 
-const actionTypes = ['CREATE', 'UPDATE', 'DELETE', 'VIEW', 'LOGIN', 'LOGOUT']
+const entityLabels: Record<string, string> = {
+  SoADocument: 'SoA Document',
+  SoA: 'SoA Entry',
+  OrganizationMember: 'Org Member',
+}
+
+const actionTypes = ['CREATE', 'UPDATE', 'DELETE', 'VIEW', 'LOGIN', 'LOGOUT', 'APPROVE', 'REJECT']
 
 export function AuditLogPage() {
   const { currentOrganizationId } = useAuthStore()
@@ -191,58 +205,30 @@ export function AuditLogPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  (auditLogs || [
-                    // Sample data for display
-                    {
-                      id: '1',
-                      action: 'UPDATE',
-                      entityType: 'CONTROL',
-                      entityId: 'ctrl-123',
-                      entityName: 'A.8.2 Privileged Access Rights',
-                      userId: 'user-1',
-                      userName: 'John Doe',
-                      details: 'Changed status from PLANNED to IMPLEMENTED',
-                      ipAddress: '192.168.1.1',
-                      createdAt: new Date().toISOString(),
-                    },
-                    {
-                      id: '2',
-                      action: 'CREATE',
-                      entityType: 'RISK',
-                      entityId: 'risk-456',
-                      entityName: 'Data Breach Risk',
-                      userId: 'user-2',
-                      userName: 'Jane Smith',
-                      details: 'Created new risk assessment',
-                      ipAddress: '192.168.1.2',
-                      createdAt: new Date(Date.now() - 3600000).toISOString(),
-                    },
-                    {
-                      id: '3',
-                      action: 'LOGIN',
-                      entityType: 'USER',
-                      entityId: 'user-1',
-                      entityName: 'John Doe',
-                      userId: 'user-1',
-                      userName: 'John Doe',
-                      details: 'Successful login',
-                      ipAddress: '192.168.1.1',
-                      createdAt: new Date(Date.now() - 7200000).toISOString(),
-                    },
-                    {
-                      id: '4',
-                      action: 'DELETE',
-                      entityType: 'ASSET',
-                      entityId: 'asset-789',
-                      entityName: 'Old Server',
-                      userId: 'user-2',
-                      userName: 'Jane Smith',
-                      details: 'Removed decommissioned asset',
-                      ipAddress: '192.168.1.2',
-                      createdAt: new Date(Date.now() - 86400000).toISOString(),
-                    },
-                  ]).map((log: any) => {
+                  (auditLogs || []).map((log: any) => {
                     const ActionIcon = getActionIcon(log.action)
+                    const userName = log.user
+                      ? `${log.user.firstName} ${log.user.lastName}`
+                      : log.userName || '—'
+                    const entityLabel = entityLabels[log.entityType] || log.entityType
+                    // Build details from oldValues/newValues
+                    const details = (() => {
+                      const parts: string[] = []
+                      if (log.oldValues && typeof log.oldValues === 'object') {
+                        Object.entries(log.oldValues).forEach(([key, val]) => {
+                          const newVal = log.newValues?.[key]
+                          if (newVal !== undefined && newVal !== val) {
+                            parts.push(`${key}: ${val} → ${newVal}`)
+                          }
+                        })
+                      }
+                      if (parts.length === 0 && log.newValues && typeof log.newValues === 'object') {
+                        Object.entries(log.newValues).forEach(([key, val]) => {
+                          parts.push(`${key}: ${val}`)
+                        })
+                      }
+                      return parts.join(', ') || log.details || ''
+                    })()
                     return (
                       <TableRow key={log.id}>
                         <TableCell>
@@ -255,9 +241,9 @@ export function AuditLogPage() {
                         <TableCell>
                           <Badge
                             variant={
-                              log.action === 'DELETE'
+                              log.action === 'DELETE' || log.action === 'REJECT'
                                 ? 'destructive'
-                                : log.action === 'CREATE'
+                                : log.action === 'CREATE' || log.action === 'APPROVE'
                                 ? 'success'
                                 : 'secondary'
                             }
@@ -267,21 +253,28 @@ export function AuditLogPage() {
                         </TableCell>
                         <TableCell>
                           <div>
-                            <p className="font-medium">{log.entityType}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {log.entityName}
-                            </p>
+                            <p className="font-medium">{entityLabel}</p>
+                            {log.entityId && (
+                              <p className="text-xs text-muted-foreground truncate max-w-[150px]">
+                                {log.entityId}
+                              </p>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <User className="h-4 w-4 text-muted-foreground" />
-                            <span>{log.userName}</span>
+                            <div>
+                              <span className="text-sm">{userName}</span>
+                              {log.user?.email && (
+                                <p className="text-xs text-muted-foreground">{log.user.email}</p>
+                              )}
+                            </div>
                           </div>
                         </TableCell>
                         <TableCell className="max-w-[300px]">
                           <p className="text-sm text-muted-foreground truncate">
-                            {log.details}
+                            {details}
                           </p>
                           {log.ipAddress && (
                             <p className="text-xs text-muted-foreground">
@@ -289,7 +282,7 @@ export function AuditLogPage() {
                             </p>
                           )}
                         </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
+                        <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                           {formatDateTime(log.createdAt)}
                         </TableCell>
                       </TableRow>

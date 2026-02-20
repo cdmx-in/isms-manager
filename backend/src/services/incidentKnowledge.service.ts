@@ -87,8 +87,8 @@ export async function startSync(organizationId: string, mode: 'full' | 'incremen
     return { jobId: existing.id, reused: true };
   }
 
-  // Cooldown: prevent sync abuse - minimum 5 minutes between syncs
-  const COOLDOWN_MS = 5 * 60 * 1000;
+  // Cooldown: prevent sync abuse - minimum 30 seconds between syncs
+  const COOLDOWN_MS = 30 * 1000;
   const recentJob = await prisma.syncJob.findFirst({
     where: {
       organizationId,
@@ -108,7 +108,7 @@ export async function startSync(organizationId: string, mode: 'full' | 'incremen
   let effectiveMode = mode;
   if (mode === 'incremental') {
     const latest: any[] = await prisma.$queryRaw`
-      SELECT MAX("itopLastUpdate") as max_date FROM "IncidentEmbedding" WHERE "organizationId" = ${organizationId}
+      SELECT MAX("itop_last_update") as max_date FROM "incident_embeddings" WHERE "organization_id" = ${organizationId}
     `;
     if (latest[0]?.max_date) {
       afterDate = new Date(latest[0].max_date).toISOString().replace('T', ' ').replace('Z', '').slice(0, 19);
@@ -120,12 +120,68 @@ export async function startSync(organizationId: string, mode: 'full' | 'incremen
   }
 
   // Get total count
-  const oqlConditions = ['org_id=2'];
-  if (afterDate) {
-    oqlConditions.push(`last_update > "${afterDate}"`);
-  }
-  const oql = `SELECT Incident WHERE ${oqlConditions.join(' AND ')}`;
+  const oql = itopService.buildSyncOql('Incident', afterDate);
   const total = await itopService.getIncidentCount(oql);
+
+  // If incremental finds nothing new, check for an incomplete previous full sync to resume
+  if (mode === 'incremental' && total === 0) {
+    const incompleteSync = await prisma.syncJob.findFirst({
+      where: {
+        organizationId,
+        type: 'incident_embedding',
+        status: { in: ['failed', 'completed'] },
+        total: { gt: 0 },
+      },
+      orderBy: { startedAt: 'desc' },
+    });
+
+    if (incompleteSync && incompleteSync.progress < incompleteSync.total) {
+      // Resume from where the interrupted sync left off
+      const resumePage = Math.floor(incompleteSync.progress / ITOP_BATCH_SIZE) + 1;
+      const fullOql = itopService.buildSyncOql('Incident'); // no date filter
+      const fullTotal = await itopService.getIncidentCount(fullOql);
+
+      logger.info(`Resuming incomplete sync from page ${resumePage} (previously indexed ${incompleteSync.progress}/${incompleteSync.total})`);
+
+      const job = await prisma.syncJob.create({
+        data: {
+          type: 'incident_embedding',
+          status: 'running',
+          total: fullTotal,
+          progress: incompleteSync.progress, // start from previous progress
+          organizationId,
+        },
+      });
+
+      runSyncPipeline(job.id, organizationId, fullOql, fullTotal, resumePage, incompleteSync.progress).catch(async (err) => {
+        logger.error('Resume sync pipeline failed:', err);
+        await prisma.syncJob.update({
+          where: { id: job.id },
+          data: { status: 'failed', error: err.message, completedAt: new Date() },
+        }).catch(() => {});
+      });
+
+      return { jobId: job.id };
+    }
+
+    // Truly up-to-date: create a minimal completed job to record the check
+    const job = await prisma.syncJob.create({
+      data: {
+        type: 'incident_embedding',
+        status: 'running',
+        total: 0,
+        organizationId,
+      },
+    });
+
+    await prisma.syncJob.update({
+      where: { id: job.id },
+      data: { status: 'completed', progress: 0, completedAt: new Date(), error: null },
+    });
+
+    logger.info('Incremental sync: knowledge base is up to date (0 new incidents)');
+    return { jobId: job.id };
+  }
 
   // Create sync job
   const job = await prisma.syncJob.create({
@@ -204,7 +260,7 @@ async function processBatch(
 
     try {
       await prisma.$executeRaw`
-        INSERT INTO "IncidentEmbedding" (id, "itopId", "chunkIndex", ref, title, content, embedding, metadata, "itopLastUpdate", "organizationId", "createdAt", "updatedAt")
+        INSERT INTO "incident_embeddings" (id, "itop_id", "chunk_index", ref, title, content, embedding, metadata, "itop_last_update", "organization_id", "created_at", "updated_at")
         VALUES (
           gen_random_uuid(),
           ${incident.itopId},
@@ -219,14 +275,14 @@ async function processBatch(
           NOW(),
           NOW()
         )
-        ON CONFLICT ("itopId", "chunkIndex") DO UPDATE SET
+        ON CONFLICT ("itop_id", "chunk_index") DO UPDATE SET
           content = EXCLUDED.content,
           embedding = EXCLUDED.embedding,
           metadata = EXCLUDED.metadata,
-          "itopLastUpdate" = EXCLUDED."itopLastUpdate",
+          "itop_last_update" = EXCLUDED."itop_last_update",
           ref = EXCLUDED.ref,
           title = EXCLUDED.title,
-          "updatedAt" = NOW()
+          "updated_at" = NOW()
       `;
     } catch (err: any) {
       logger.error(`Failed to upsert incident ${incident.ref} chunk ${chunkIndex}:`, err.message);
@@ -240,15 +296,23 @@ async function processBatch(
 /**
  * The actual sync pipeline - runs in background.
  * Uses iTop's native page parameter for pagination.
+ * startPage and initialProcessed allow resuming an interrupted sync.
  */
-async function runSyncPipeline(jobId: string, organizationId: string, baseOql: string, total: number): Promise<void> {
-  let processed = 0;
+async function runSyncPipeline(
+  jobId: string,
+  organizationId: string,
+  baseOql: string,
+  total: number,
+  startPage: number = 1,
+  initialProcessed: number = 0,
+): Promise<void> {
+  let processed = initialProcessed;
   let errors = 0;
 
   try {
     const totalPages = Math.ceil(total / ITOP_BATCH_SIZE);
 
-    for (let page = 1; page <= totalPages; page++) {
+    for (let page = startPage; page <= totalPages; page++) {
       const batch = await itopService.getIncidentsBatch({
         oql: baseOql,
         limit: ITOP_BATCH_SIZE,
@@ -308,22 +372,36 @@ export async function getSyncJobStatus(jobId: string) {
 }
 
 export async function getKnowledgeBaseStatus(organizationId: string) {
-  const [indexedCount, totalChunks, lastJob] = await Promise.all([
+  const [indexedCount, totalChunks, lastJob, incompleteFullSync] = await Promise.all([
     prisma.$queryRaw<[{ count: bigint }]>`
-      SELECT COUNT(DISTINCT "itopId") as count FROM "IncidentEmbedding" WHERE "organizationId" = ${organizationId}
+      SELECT COUNT(DISTINCT "itop_id") as count FROM "incident_embeddings" WHERE "organization_id" = ${organizationId}
     `,
     prisma.$queryRaw<[{ count: bigint }]>`
-      SELECT COUNT(*) as count FROM "IncidentEmbedding" WHERE "organizationId" = ${organizationId}
+      SELECT COUNT(*) as count FROM "incident_embeddings" WHERE "organization_id" = ${organizationId}
     `,
     prisma.syncJob.findFirst({
       where: { organizationId, type: 'incident_embedding' },
       orderBy: { startedAt: 'desc' },
     }),
+    prisma.syncJob.findFirst({
+      where: {
+        organizationId,
+        type: 'incident_embedding',
+        status: { in: ['failed', 'completed'] },
+        total: { gt: 0 },
+      },
+      orderBy: { startedAt: 'desc' },
+    }),
   ]);
+
+  const incomplete = incompleteFullSync && incompleteFullSync.progress < incompleteFullSync.total
+    ? { progress: incompleteFullSync.progress, total: incompleteFullSync.total }
+    : null;
 
   return {
     indexedIncidents: Number(indexedCount[0]?.count || 0),
     totalChunks: Number(totalChunks[0]?.count || 0),
+    incompleteSync: incomplete,
     lastSync: lastJob ? {
       id: lastJob.id,
       status: lastJob.status,
@@ -359,11 +437,11 @@ export async function searchIncidents(
   const vectorStr = `[${embeddings[0].join(',')}]`;
 
   const results = await prisma.$queryRaw<IncidentSearchResult[]>`
-    SELECT ie."itopId", ie.ref, ie.title, ie.content,
+    SELECT ie."itop_id" as "itopId", ie.ref, ie.title, ie.content,
       1 - (ie.embedding <=> ${vectorStr}::vector) as similarity,
-      ie.metadata, ie."chunkIndex"
-    FROM "IncidentEmbedding" ie
-    WHERE ie."organizationId" = ${organizationId}
+      ie.metadata, ie."chunk_index" as "chunkIndex"
+    FROM "incident_embeddings" ie
+    WHERE ie."organization_id" = ${organizationId}
       AND ie.embedding IS NOT NULL
     ORDER BY ie.embedding <=> ${vectorStr}::vector
     LIMIT ${limit}
@@ -386,8 +464,8 @@ export async function findSimilarIncidents(
 ): Promise<IncidentSearchResult[]> {
   // Check if source incident exists in the KB
   const sourceCheck = await prisma.$queryRaw<Array<{ count: bigint }>>`
-    SELECT COUNT(*) as count FROM "IncidentEmbedding"
-    WHERE "itopId" = ${itopId} AND "chunkIndex" = 0 AND embedding IS NOT NULL
+    SELECT COUNT(*) as count FROM "incident_embeddings"
+    WHERE "itop_id" = ${itopId} AND "chunk_index" = 0 AND embedding IS NOT NULL
   `;
 
   if (!sourceCheck[0] || Number(sourceCheck[0].count) === 0) {
@@ -396,15 +474,15 @@ export async function findSimilarIncidents(
 
   // Find nearest neighbors using subquery (avoids deserializing vector in JS)
   const results = await prisma.$queryRaw<IncidentSearchResult[]>`
-    SELECT ie."itopId", ie.ref, ie.title, ie.content,
-      1 - (ie.embedding <=> (SELECT embedding FROM "IncidentEmbedding" WHERE "itopId" = ${itopId} AND "chunkIndex" = 0 LIMIT 1)) as similarity,
-      ie.metadata, ie."chunkIndex"
-    FROM "IncidentEmbedding" ie
-    WHERE ie."organizationId" = ${organizationId}
-      AND ie."itopId" != ${itopId}
-      AND ie."chunkIndex" = 0
+    SELECT ie."itop_id" as "itopId", ie.ref, ie.title, ie.content,
+      1 - (ie.embedding <=> (SELECT embedding FROM "incident_embeddings" WHERE "itop_id" = ${itopId} AND "chunk_index" = 0 LIMIT 1)) as similarity,
+      ie.metadata, ie."chunk_index" as "chunkIndex"
+    FROM "incident_embeddings" ie
+    WHERE ie."organization_id" = ${organizationId}
+      AND ie."itop_id" != ${itopId}
+      AND ie."chunk_index" = 0
       AND ie.embedding IS NOT NULL
-    ORDER BY ie.embedding <=> (SELECT embedding FROM "IncidentEmbedding" WHERE "itopId" = ${itopId} AND "chunkIndex" = 0 LIMIT 1)
+    ORDER BY ie.embedding <=> (SELECT embedding FROM "incident_embeddings" WHERE "itop_id" = ${itopId} AND "chunk_index" = 0 LIMIT 1)
     LIMIT ${limit}
   `;
 

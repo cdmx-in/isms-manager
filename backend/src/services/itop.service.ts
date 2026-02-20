@@ -5,6 +5,7 @@ interface ITopConfig {
   username: string;
   password: string;
   apiVersion: string;
+  orgId: string;
 }
 
 interface ITopQuery {
@@ -32,6 +33,7 @@ class ITopService {
       username: process.env.ITOP_USERNAME || '',
       password: process.env.ITOP_PASSWORD || '',
       apiVersion: process.env.ITOP_API_VERSION || '1.3',
+      orgId: process.env.ITOP_ORG_ID || '',
     };
 
     this.client = axios.create({
@@ -59,6 +61,36 @@ class ITopService {
       console.error('iTop API Error:', error.response?.data || error.message);
       throw new Error(`iTop API request failed: ${error.message}`);
     }
+  }
+
+  /**
+   * Build a sync OQL for a class (Incident or Change) with optional afterDate.
+   * Applies org filter if ITOP_ORG_ID is configured.
+   */
+  buildSyncOql(className: string, afterDate?: string): string {
+    const orgCond = this.getOrgCondition();
+    const conditions: string[] = [];
+    if (orgCond) conditions.push(orgCond);
+    if (afterDate) conditions.push(`last_update > "${afterDate}"`);
+    return conditions.length > 0
+      ? `SELECT ${className} WHERE ${conditions.join(' AND ')}`
+      : `SELECT ${className}`;
+  }
+
+  /**
+   * Returns the base OQL condition for org filtering.
+   * If ITOP_ORG_ID is set, restricts to that org; otherwise no org filter.
+   */
+  private getOrgCondition(): string | null {
+    return this.config.orgId ? `org_id=${this.config.orgId}` : null;
+  }
+
+  /**
+   * Build a base OQL for a class with optional org filter.
+   */
+  private baseOql(className: string): string {
+    const orgCond = this.getOrgCondition();
+    return orgCond ? `SELECT ${className} WHERE ${orgCond}` : `SELECT ${className}`;
   }
 
   /**
@@ -320,7 +352,8 @@ class ITopService {
     const page = options?.page || 1;
 
     // Build OQL filter
-    const oqlConditions = ['org_id=2'];
+    const orgCond = this.getOrgCondition();
+    const oqlConditions: string[] = orgCond ? [orgCond] : [];
 
     if (options?.status) {
       const statusMap: Record<string, string> = {
@@ -348,7 +381,9 @@ class ITopService {
       oqlConditions.push(`origin = "${originVal}"`);
     }
 
-    const oql = `SELECT Incident WHERE ${oqlConditions.join(' AND ')}`;
+    const oql = oqlConditions.length > 0
+      ? `SELECT Incident WHERE ${oqlConditions.join(' AND ')}`
+      : 'SELECT Incident';
 
     // First get total count with a lightweight query (limit=1)
     const total = await this.getCount(oql);
@@ -386,7 +421,7 @@ class ITopService {
    * Get incident statistics from iTop using lightweight count queries
    */
   async getIncidentStats(): Promise<any> {
-    const baseOql = 'SELECT Incident WHERE org_id=2';
+    const baseOql = this.baseOql('Incident');
 
     // Run count queries in parallel for each status and priority combo
     const [
@@ -432,13 +467,14 @@ class ITopService {
     afterDate?: string;
   }): Promise<{ data: any[]; total: number }> {
     const limit = options.limit || 500;
-    const oqlConditions = ['org_id=2'];
+    const orgCond = this.getOrgCondition();
+    const oqlConditions: string[] = orgCond ? [orgCond] : [];
 
     if (options.afterDate) {
       oqlConditions.push(`last_update > "${options.afterDate}"`);
     }
 
-    const oql = options.oql || `SELECT Incident WHERE ${oqlConditions.join(' AND ')}`;
+    const oql = options.oql || (oqlConditions.length > 0 ? `SELECT Incident WHERE ${oqlConditions.join(' AND ')}` : 'SELECT Incident');
 
     const query: ITopQuery = {
       operation: 'core/get',
@@ -472,7 +508,7 @@ class ITopService {
    * Get total incident count for a given OQL
    */
   async getIncidentCount(oql?: string): Promise<number> {
-    return this.getCount(oql || 'SELECT Incident WHERE org_id=2');
+    return this.getCount(oql || this.baseOql('Incident'));
   }
 
   // ============================================
@@ -536,7 +572,8 @@ class ITopService {
     const limit = options?.limit || 50;
     const page = options?.page || 1;
 
-    const oqlConditions = ['org_id=2'];
+    const orgCond = this.getOrgCondition();
+    const oqlConditions: string[] = orgCond ? [orgCond] : [];
 
     if (options?.status) {
       const statusMap: Record<string, string> = {
@@ -562,7 +599,9 @@ class ITopService {
       oqlConditions.push(`team_name = "${teamName}"`);
     }
 
-    const oql = `SELECT Change WHERE ${oqlConditions.join(' AND ')}`;
+    const oql = oqlConditions.length > 0
+      ? `SELECT Change WHERE ${oqlConditions.join(' AND ')}`
+      : 'SELECT Change';
 
     const total = await this.getChangeCount(oql);
 
@@ -614,7 +653,7 @@ class ITopService {
    * Get change statistics from iTop
    */
   async getChangeStats(): Promise<any> {
-    const baseOql = 'SELECT Change WHERE org_id=2';
+    const baseOql = this.baseOql('Change');
 
     const [
       totalCount,
@@ -663,13 +702,14 @@ class ITopService {
     afterDate?: string;
   }): Promise<{ data: any[]; total: number }> {
     const limit = options.limit || 500;
-    const oqlConditions = ['org_id=2'];
+    const orgCond = this.getOrgCondition();
+    const oqlConditions: string[] = orgCond ? [orgCond] : [];
 
     if (options.afterDate) {
       oqlConditions.push(`last_update > "${options.afterDate}"`);
     }
 
-    const oql = options.oql || `SELECT Change WHERE ${oqlConditions.join(' AND ')}`;
+    const oql = options.oql || (oqlConditions.length > 0 ? `SELECT Change WHERE ${oqlConditions.join(' AND ')}` : 'SELECT Change');
 
     const query: ITopQuery = {
       operation: 'core/get',
@@ -701,7 +741,7 @@ class ITopService {
    * Get total change count for a given OQL
    */
   async getChangeCountPublic(oql?: string): Promise<number> {
-    return this.getChangeCount(oql || 'SELECT Change WHERE org_id=2');
+    return this.getChangeCount(oql || this.baseOql('Change'));
   }
 
   /**

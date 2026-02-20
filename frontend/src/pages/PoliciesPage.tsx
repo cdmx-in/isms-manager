@@ -217,7 +217,7 @@ export function PoliciesPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          {ragStatus && ragStatus.pendingDocuments > 0 && (
+          {ragStatus && ragStatus.totalDocuments > 0 && (
             <Button
               onClick={() => indexAllMutation.mutate()}
               disabled={indexAllMutation.isPending}
@@ -227,7 +227,9 @@ export function PoliciesPage() {
               ) : (
                 <Brain className="mr-2 h-4 w-4" />
               )}
-              Index {ragStatus.pendingDocuments} Documents
+              {ragStatus.pendingDocuments > 0
+                ? `Index ${ragStatus.pendingDocuments} Documents`
+                : 'Re-index Documents'}
             </Button>
           )}
           <Button

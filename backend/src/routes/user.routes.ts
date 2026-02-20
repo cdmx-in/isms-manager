@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../index.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { authenticate, authorize, AuthenticatedRequest } from '../middleware/auth.js';
+import { authenticate, requirePermission, AuthenticatedRequest } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { uuidParam, paginationQuery } from '../middleware/validators.js';
 import { createAuditLog } from '../services/audit.service.js';
@@ -12,7 +12,7 @@ const router = Router();
 router.get(
   '/',
   authenticate,
-  authorize('ADMIN', 'LOCAL_ADMIN'),
+  requirePermission('users', 'view'),
   paginationQuery,
   validate,
   asyncHandler(async (req, res) => {
@@ -96,6 +96,7 @@ router.get(
         lastName: true,
         role: true,
         avatar: true,
+        designation: true,
         isActive: true,
         isEmailVerified: true,
         authProvider: true,
@@ -127,7 +128,41 @@ router.get(
   })
 );
 
-// Update user profile
+// Update own profile (used by Settings page)
+router.patch(
+  '/profile',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { firstName, lastName, avatar, designation } = req.body;
+
+    const updateData: any = {};
+    if (firstName !== undefined) updateData.firstName = firstName;
+    if (lastName !== undefined) updateData.lastName = lastName;
+    if (avatar !== undefined) updateData.avatar = avatar;
+    if (designation !== undefined) updateData.designation = designation;
+
+    const user = await prisma.user.update({
+      where: { id: authReq.user.id },
+      data: updateData,
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        avatar: true,
+        designation: true,
+        isActive: true,
+        updatedAt: true,
+      },
+    });
+
+    res.json({ success: true, data: user });
+  })
+);
+
+// Update user profile (admin or self by ID)
 router.patch(
   '/:id',
   authenticate,
@@ -136,7 +171,7 @@ router.patch(
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const authReq = req as AuthenticatedRequest;
-    const { firstName, lastName, avatar } = req.body;
+    const { firstName, lastName, avatar, designation } = req.body;
 
     // Users can only update their own profile unless admin
     if (authReq.user.role !== 'ADMIN' && authReq.user.id !== id) {
@@ -152,6 +187,7 @@ router.patch(
     if (firstName !== undefined) updateData.firstName = firstName;
     if (lastName !== undefined) updateData.lastName = lastName;
     if (avatar !== undefined) updateData.avatar = avatar;
+    if (designation !== undefined) updateData.designation = designation;
 
     // Admin-only fields
     if (authReq.user.role === 'ADMIN') {
@@ -170,6 +206,7 @@ router.patch(
         lastName: true,
         role: true,
         avatar: true,
+        designation: true,
         isActive: true,
         updatedAt: true,
       },
@@ -197,7 +234,7 @@ router.patch(
 router.delete(
   '/:id',
   authenticate,
-  authorize('ADMIN'),
+  requirePermission('users', 'edit'),
   uuidParam('id'),
   validate,
   asyncHandler(async (req, res) => {

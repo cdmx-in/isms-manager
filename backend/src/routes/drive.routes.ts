@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../index.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.js';
+import { authenticate, requirePermission, AuthenticatedRequest } from '../middleware/auth.js';
 import {
   isDriveConfigured,
   listFolderContents,
@@ -21,19 +21,12 @@ const router = Router();
 router.get(
   '/folders',
   authenticate,
+  requirePermission('policies', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId } = req.query;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const folders = await prisma.driveFolder.findMany({
@@ -56,20 +49,12 @@ router.get(
 router.post(
   '/folders',
   authenticate,
+  requirePermission('policies', 'edit'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId, driveId, name, folderType } = req.body;
 
     if (!organizationId || !driveId || !name) {
       throw new AppError('organizationId, driveId, and name are required', 400);
-    }
-
-    // Admin only
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership || (membership.role !== 'ADMIN' && authReq.user.role !== 'ADMIN')) {
-      throw new AppError('Admin access required', 403);
     }
 
     const folder = await prisma.driveFolder.create({
@@ -177,8 +162,8 @@ router.get(
 router.get(
   '/search',
   authenticate,
+  requirePermission('policies', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId, q } = req.query;
 
     if (!organizationId || !q) {
@@ -210,19 +195,12 @@ router.get(
 router.post(
   '/sync',
   authenticate,
+  requirePermission('policies', 'edit'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId } = req.body;
 
     if (!organizationId) {
       throw new AppError('organizationId is required', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership || (membership.role !== 'ADMIN' && authReq.user.role !== 'ADMIN')) {
-      throw new AppError('Admin access required', 403);
     }
 
     if (!isDriveConfigured()) {
@@ -279,19 +257,12 @@ router.post(
 router.get(
   '/documents',
   authenticate,
+  requirePermission('policies', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId, folderId, search } = req.query;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const where: any = { organizationId: organizationId as string };

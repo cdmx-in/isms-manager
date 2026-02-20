@@ -156,7 +156,7 @@ export const indexDocument = async (documentId: string, userAccessToken?: string
     const vectorStr = `[${embedding.join(',')}]`;
 
     await prisma.$executeRaw`
-      INSERT INTO "DocumentChunk" (id, "documentId", "chunkIndex", content, metadata, "tokenCount", embedding, "createdAt")
+      INSERT INTO "document_chunks" (id, "document_id", "chunk_index", content, metadata, "token_count", embedding, "created_at")
       VALUES (
         gen_random_uuid(),
         ${documentId},
@@ -201,13 +201,13 @@ export const indexAllDocuments = async (
     }),
     // Catch any docs modified after indexing (safety net)
     prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM "DriveDocument"
-      WHERE "organizationId" = ${organizationId}
-        AND "isIndexed" = true
-        AND "driveModifiedAt" IS NOT NULL
-        AND "indexedAt" IS NOT NULL
-        AND "driveModifiedAt" > "indexedAt"
-        AND "mimeType" = ANY(${supportedMimeTypes})
+      SELECT id FROM "drive_documents"
+      WHERE "organization_id" = ${organizationId}
+        AND "is_indexed" = true
+        AND "drive_modified_at" IS NOT NULL
+        AND "indexed_at" IS NOT NULL
+        AND "drive_modified_at" > "indexed_at"
+        AND "mime_type" = ANY(${supportedMimeTypes})
     `,
   ]);
 
@@ -280,12 +280,12 @@ export const semanticSearch = async (
     return prisma.$queryRaw<SearchResult[]>`
       SELECT dc.id, dc.content,
         1 - (dc.embedding <=> ${vectorStr}::vector) as similarity,
-        dc."documentId", dd.name as "documentName", dd."webViewLink",
-        dc."chunkIndex", dc.metadata
-      FROM "DocumentChunk" dc
-      JOIN "DriveDocument" dd ON dc."documentId" = dd.id
-      WHERE dd."organizationId" = ${organizationId}
-        AND dd."folderId" = ${options.folderId}
+        dc."document_id" as "documentId", dd.name as "documentName", dd."web_view_link" as "webViewLink",
+        dc."chunk_index" as "chunkIndex", dc.metadata
+      FROM "document_chunks" dc
+      JOIN "drive_documents" dd ON dc."document_id" = dd.id
+      WHERE dd."organization_id" = ${organizationId}
+        AND dd."folder_id" = ${options.folderId}
         AND dc.embedding IS NOT NULL
       ORDER BY dc.embedding <=> ${vectorStr}::vector
       LIMIT ${limit}
@@ -295,11 +295,11 @@ export const semanticSearch = async (
   return prisma.$queryRaw<SearchResult[]>`
     SELECT dc.id, dc.content,
       1 - (dc.embedding <=> ${vectorStr}::vector) as similarity,
-      dc."documentId", dd.name as "documentName", dd."webViewLink",
-      dc."chunkIndex", dc.metadata
-    FROM "DocumentChunk" dc
-    JOIN "DriveDocument" dd ON dc."documentId" = dd.id
-    WHERE dd."organizationId" = ${organizationId}
+      dc."document_id" as "documentId", dd.name as "documentName", dd."web_view_link" as "webViewLink",
+      dc."chunk_index" as "chunkIndex", dc.metadata
+    FROM "document_chunks" dc
+    JOIN "drive_documents" dd ON dc."document_id" = dd.id
+    WHERE dd."organization_id" = ${organizationId}
       AND dc.embedding IS NOT NULL
     ORDER BY dc.embedding <=> ${vectorStr}::vector
     LIMIT ${limit}
@@ -371,20 +371,40 @@ export const answerQuestion = async (
 // ============================================
 
 export const getIndexingStatus = async (organizationId: string) => {
-  const [totalDocs, indexedDocs, pendingDocs, errorDocs, totalChunks] = await Promise.all([
+  const supportedMimeTypes = [
+    'application/pdf',
+    'application/vnd.google-apps.document',
+    'application/vnd.google-apps.spreadsheet',
+    'application/vnd.google-apps.presentation',
+  ];
+
+  const [totalDocs, indexedDocs, pendingDocs, errorDocs, totalChunks, staleDocs] = await Promise.all([
     prisma.driveDocument.count({ where: { organizationId } }),
     prisma.driveDocument.count({ where: { organizationId, isIndexed: true } }),
     prisma.driveDocument.count({ where: { organizationId, isIndexed: false, syncStatus: { not: 'ERROR' } } }),
     prisma.driveDocument.count({ where: { organizationId, syncStatus: 'ERROR' } }),
     prisma.documentChunk.count({ where: { document: { organizationId } } }),
+    // Count docs modified after last indexing (stale)
+    prisma.$queryRaw<[{ count: bigint }]>`
+      SELECT COUNT(*)::bigint as count FROM "drive_documents"
+      WHERE "organization_id" = ${organizationId}
+        AND "is_indexed" = true
+        AND "drive_modified_at" IS NOT NULL
+        AND "indexed_at" IS NOT NULL
+        AND "drive_modified_at" > "indexed_at"
+        AND "mime_type" = ANY(${supportedMimeTypes})
+    `.then(r => Number(r[0]?.count || 0)),
   ]);
+
+  const staleCount = staleDocs as unknown as number;
 
   return {
     totalDocuments: totalDocs,
     indexedDocuments: indexedDocs,
-    pendingDocuments: pendingDocs,
+    pendingDocuments: pendingDocs + staleCount,
+    staleDocuments: staleCount,
     errorDocuments: errorDocs,
     totalChunks,
-    isFullyIndexed: pendingDocs === 0 && errorDocs === 0 && totalDocs > 0,
+    isFullyIndexed: pendingDocs === 0 && staleCount === 0 && errorDocs === 0 && totalDocs > 0,
   };
 };

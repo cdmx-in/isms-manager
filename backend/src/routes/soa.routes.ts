@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { prisma } from '../index.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.js';
+import { authenticate, requirePermission, hasPermission, AuthenticatedRequest } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { uuidParam, paginationQuery } from '../middleware/validators.js';
 import { createAuditLog } from '../services/audit.service.js';
+
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 
@@ -12,16 +14,55 @@ const router = Router();
 // HELPERS
 // ============================================
 
-const getNextSoAVersion = async (soaEntryId: string, isMajor: boolean): Promise<number> => {
+const createNotification = async (
+  userId: string,
+  organizationId: string,
+  type: string,
+  title: string,
+  message: string,
+  link?: string
+) => {
+  try {
+    await prisma.notification.create({
+      data: { userId, organizationId, type, title, message, link },
+    });
+  } catch (err) {
+    logger.error('Failed to create notification:', err);
+  }
+};
+
+const getOrCreateSoADocument = async (organizationId: string) => {
+  let doc = await prisma.soADocument.findUnique({
+    where: { organizationId },
+    include: {
+      reviewer: { select: { id: true, firstName: true, lastName: true, email: true, avatar: true, designation: true } },
+      approver: { select: { id: true, firstName: true, lastName: true, email: true, avatar: true, designation: true } },
+      _count: { select: { versions: true } },
+    },
+  });
+
+  if (!doc) {
+    doc = await prisma.soADocument.create({
+      data: { organizationId, version: 0.1, approvalStatus: 'DRAFT' },
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        _count: { select: { versions: true } },
+      },
+    });
+  }
+
+  return doc;
+};
+
+const getNextDocVersion = async (soaDocumentId: string, isMajor: boolean): Promise<number> => {
   const lastVersion = await prisma.soAVersion.findFirst({
-    where: { soaEntryId },
+    where: { soaDocumentId },
     orderBy: { version: 'desc' },
     select: { version: true },
   });
 
-  if (!lastVersion) {
-    return 0.1;
-  }
+  if (!lastVersion) return 0.1;
 
   if (isMajor) {
     return Math.floor(lastVersion.version) + 1.0;
@@ -32,8 +73,8 @@ const getNextSoAVersion = async (soaEntryId: string, isMajor: boolean): Promise<
   return Number((major + (minor + 1) / 10).toFixed(1));
 };
 
-const createSoAVersionEntry = async (params: {
-  soaEntryId: string;
+const createDocVersionEntry = async (params: {
+  soaDocumentId: string;
   version: number;
   changeDescription: string;
   actor: string;
@@ -42,18 +83,23 @@ const createSoAVersionEntry = async (params: {
   createdById?: string;
   approvedById?: string;
 }) => {
-  const soaData = await prisma.soAEntry.findUnique({
-    where: { id: params.soaEntryId },
-    include: {
-      control: {
-        select: { id: true, controlId: true, name: true, category: true },
+  return prisma.soAVersion.upsert({
+    where: {
+      soaDocumentId_version: {
+        soaDocumentId: params.soaDocumentId,
+        version: params.version,
       },
     },
-  });
-
-  return prisma.soAVersion.create({
-    data: {
-      soaEntryId: params.soaEntryId,
+    update: {
+      changeDescription: params.changeDescription,
+      actor: params.actor,
+      actorDesignation: params.actorDesignation,
+      action: params.action,
+      createdById: params.createdById,
+      approvedById: params.approvedById,
+    },
+    create: {
+      soaDocumentId: params.soaDocumentId,
       version: params.version,
       changeDescription: params.changeDescription,
       actor: params.actor,
@@ -61,23 +107,603 @@ const createSoAVersionEntry = async (params: {
       action: params.action,
       createdById: params.createdById,
       approvedById: params.approvedById,
-      soaData: soaData as any,
     },
   });
 };
 
 // ============================================
-// GET ROUTES
+// DOCUMENT ROUTES
 // ============================================
 
-// Get Statement of Applicability
+// Get SoA document (auto-creates if needed)
+router.get(
+  '/document',
+  authenticate,
+  requirePermission('soa', 'view'),
+  asyncHandler(async (req, res) => {
+    const { organizationId } = req.query;
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+
+    const doc = await getOrCreateSoADocument(organizationId as string);
+
+    res.json({ success: true, data: doc });
+  })
+);
+
+// Update SoA document metadata (reviewer, approver, title, etc.)
+router.patch(
+  '/document',
+  authenticate,
+  requirePermission('soa', 'edit'),
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId, reviewerId, approverId, title, identification, classification } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+
+    const doc = await getOrCreateSoADocument(organizationId);
+
+    const updateData: any = {};
+    if (reviewerId !== undefined) updateData.reviewerId = reviewerId || null;
+    if (approverId !== undefined) updateData.approverId = approverId || null;
+    if (title !== undefined) updateData.title = title;
+    if (identification !== undefined) updateData.identification = identification;
+    if (classification !== undefined) updateData.classification = classification;
+
+    const updated = await prisma.soADocument.update({
+      where: { id: doc.id },
+      data: updateData,
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        _count: { select: { versions: true } },
+      },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'UPDATE',
+      entityType: 'SoADocument',
+      entityId: doc.id,
+      newValues: updateData,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json({ success: true, data: updated });
+  })
+);
+
+// Get document version history
+router.get(
+  '/document/versions',
+  authenticate,
+  requirePermission('soa', 'view'),
+  asyncHandler(async (req, res) => {
+    const { organizationId } = req.query;
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+
+    const doc = await getOrCreateSoADocument(organizationId as string);
+
+    const versions = await prisma.soAVersion.findMany({
+      where: { soaDocumentId: doc.id },
+      orderBy: { version: 'desc' },
+    });
+
+    res.json({ success: true, data: versions });
+  })
+);
+
+// Update version entry description
+router.patch(
+  '/document/versions/:versionId',
+  authenticate,
+  requirePermission('soa', 'edit'),
+  asyncHandler(async (req, res) => {
+    const { versionId } = req.params;
+    const authReq = req as AuthenticatedRequest;
+    const { changeDescription } = req.body;
+
+    if (!changeDescription?.trim()) throw new AppError('Change description is required', 400);
+
+    const version = await prisma.soAVersion.findUnique({ where: { id: versionId } });
+    if (!version) throw new AppError('Version entry not found', 404);
+
+    const doc = await prisma.soADocument.findUnique({ where: { id: version.soaDocumentId } });
+    if (!doc) throw new AppError('SoA document not found', 404);
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === doc.organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('You are not a member of this organization', 403);
+    }
+
+    const updated = await prisma.soAVersion.update({
+      where: { id: versionId },
+      data: { changeDescription: changeDescription.trim() },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId: doc.organizationId,
+      action: 'UPDATE',
+      entityType: 'SoAVersion',
+      entityId: versionId,
+      oldValues: { changeDescription: version.changeDescription },
+      newValues: { changeDescription: changeDescription.trim() },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json({ success: true, data: updated });
+  })
+);
+
+// Submit SoA document for review
+router.post(
+  '/document/submit-for-review',
+  authenticate,
+  requirePermission('soa', 'edit'),
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId, changeDescription, versionBump } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+    if (!changeDescription) throw new AppError('Description of change is required', 400);
+
+    const doc = await getOrCreateSoADocument(organizationId);
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('You are not a member of this organization', 403);
+    }
+    if (membership?.role === 'VIEWER') {
+      throw new AppError('Viewers cannot submit SoA for review', 403);
+    }
+
+    if (doc.approvalStatus !== 'DRAFT' && doc.approvalStatus !== 'REJECTED') {
+      throw new AppError(`SoA cannot be submitted for review from ${doc.approvalStatus} status`, 400);
+    }
+
+    // 'none'/undefined = keep current, 'minor'/'major' = bump
+    const nextVersion = (!versionBump || versionBump === 'none')
+      ? doc.version
+      : await getNextDocVersion(doc.id, versionBump === 'major');
+
+    const updated = await prisma.soADocument.update({
+      where: { id: doc.id },
+      data: { approvalStatus: 'PENDING_FIRST_APPROVAL', version: nextVersion, updatedAt: new Date() },
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+      },
+    });
+
+    await createDocVersionEntry({
+      soaDocumentId: doc.id,
+      version: nextVersion,
+      changeDescription: changeDescription || 'SoA submitted for review',
+      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
+      actorDesignation: authReq.user.designation || membership?.role || authReq.user.role,
+      action: 'Submitted for Review',
+      createdById: authReq.user.id,
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'UPDATE',
+      entityType: 'SoADocument',
+      entityId: doc.id,
+      oldValues: { approvalStatus: doc.approvalStatus },
+      newValues: { approvalStatus: 'PENDING_FIRST_APPROVAL' },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    // Notify reviewer
+    if (updated.reviewerId) {
+      await createNotification(
+        updated.reviewerId,
+        organizationId,
+        'soa_submitted',
+        'SoA Submitted for Review',
+        `${authReq.user.firstName} ${authReq.user.lastName} has submitted the Statement of Applicability (v${nextVersion.toFixed(1)}) for your review.`,
+        '/soa?tab=approvals'
+      );
+    }
+
+    res.json({
+      success: true,
+      data: updated,
+      message: 'SoA submitted for 1st level approval',
+    });
+  })
+);
+
+// First level approval — only the assigned reviewer can approve
+router.post(
+  '/document/first-approval',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+
+    const doc = await getOrCreateSoADocument(organizationId);
+
+    if (doc.approvalStatus !== 'PENDING_FIRST_APPROVAL') {
+      throw new AppError(`SoA is not pending 1st level approval (current: ${doc.approvalStatus})`, 400);
+    }
+
+    // Only the assigned reviewer (or global ADMIN) can give 1st level approval
+    if (authReq.user.role !== 'ADMIN' && doc.reviewerId !== authReq.user.id) {
+      throw new AppError('Only the assigned reviewer can provide 1st level approval', 403);
+    }
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('You are not a member of this organization', 403);
+    }
+
+    const currentVersion = doc.version;
+
+    const updated = await prisma.soADocument.update({
+      where: { id: doc.id },
+      data: { approvalStatus: 'PENDING_SECOND_APPROVAL', updatedAt: new Date() },
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+      },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'APPROVE',
+      entityType: 'SoADocument',
+      entityId: doc.id,
+      oldValues: { approvalStatus: 'PENDING_FIRST_APPROVAL' },
+      newValues: { approvalStatus: 'PENDING_SECOND_APPROVAL' },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    // Notify approver
+    if (updated.approverId) {
+      await createNotification(
+        updated.approverId,
+        organizationId,
+        'soa_approved_first',
+        'SoA Pending Final Approval',
+        `${authReq.user.firstName} ${authReq.user.lastName} has given 1st level approval for the SoA (v${currentVersion.toFixed(1)}). Your final approval is needed.`,
+        '/soa?tab=approvals'
+      );
+    }
+
+    res.json({
+      success: true,
+      data: updated,
+      message: '1st level approval granted. Pending 2nd level approval.',
+    });
+  })
+);
+
+// Second level approval — only the assigned approver can approve
+router.post(
+  '/document/second-approval',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+
+    const doc = await getOrCreateSoADocument(organizationId);
+
+    if (doc.approvalStatus !== 'PENDING_SECOND_APPROVAL') {
+      throw new AppError(`SoA is not pending 2nd level approval (current: ${doc.approvalStatus})`, 400);
+    }
+
+    // Only the assigned approver (or global ADMIN) can give 2nd level approval
+    if (authReq.user.role !== 'ADMIN' && doc.approverId !== authReq.user.id) {
+      throw new AppError('Only the assigned approver can provide 2nd level approval', 403);
+    }
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('You are not a member of this organization', 403);
+    }
+
+    const currentVersion = doc.version;
+
+    const updated = await prisma.soADocument.update({
+      where: { id: doc.id },
+      data: { approvalStatus: 'APPROVED', updatedAt: new Date() },
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+      },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'APPROVE',
+      entityType: 'SoADocument',
+      entityId: doc.id,
+      oldValues: { approvalStatus: 'PENDING_SECOND_APPROVAL' },
+      newValues: { approvalStatus: 'APPROVED' },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    // Notify reviewer that SoA is fully approved
+    if (updated.reviewerId && updated.reviewerId !== authReq.user.id) {
+      await createNotification(
+        updated.reviewerId,
+        organizationId,
+        'soa_approved_final',
+        'SoA Fully Approved',
+        `The Statement of Applicability has been fully approved (v${currentVersion.toFixed(1)}) by ${authReq.user.firstName} ${authReq.user.lastName}.`,
+        '/soa?tab=versions'
+      );
+    }
+
+    res.json({
+      success: true,
+      data: updated,
+      message: 'SoA fully approved (v' + currentVersion.toFixed(1) + ')',
+    });
+  })
+);
+
+// Create new revision (reset APPROVED → DRAFT for a new editing cycle)
+router.post(
+  '/document/new-revision',
+  authenticate,
+  requirePermission('soa', 'edit'),
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId, changeDescription, versionBump } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+    if (!changeDescription) throw new AppError('Description of change is required', 400);
+
+    const doc = await getOrCreateSoADocument(organizationId);
+
+    if (doc.approvalStatus !== 'APPROVED') {
+      throw new AppError(`Can only create a new revision from APPROVED status (current: ${doc.approvalStatus})`, 400);
+    }
+
+    const nextVersion = await getNextDocVersion(doc.id, versionBump === 'major');
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('You are not a member of this organization', 403);
+    }
+
+    const updated = await prisma.soADocument.update({
+      where: { id: doc.id },
+      data: { approvalStatus: 'DRAFT', version: nextVersion, updatedAt: new Date() },
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        _count: { select: { versions: true } },
+      },
+    });
+
+    await createDocVersionEntry({
+      soaDocumentId: doc.id,
+      version: nextVersion,
+      changeDescription: changeDescription || 'New revision started',
+      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
+      actorDesignation: authReq.user.designation || membership?.role || authReq.user.role,
+      action: 'Draft & Review',
+      createdById: authReq.user.id,
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'UPDATE',
+      entityType: 'SoADocument',
+      entityId: doc.id,
+      oldValues: { approvalStatus: 'APPROVED', version: doc.version },
+      newValues: { approvalStatus: 'DRAFT', version: nextVersion },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json({
+      success: true,
+      data: updated,
+      message: `New revision started (v${nextVersion.toFixed(1)}). You can now make changes and submit for review.`,
+    });
+  })
+);
+
+// Discard a new revision (revert to APPROVED with previous version)
+router.post(
+  '/document/discard-revision',
+  authenticate,
+  requirePermission('soa', 'edit'),
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+
+    const doc = await getOrCreateSoADocument(organizationId);
+
+    if (doc.approvalStatus !== 'DRAFT') {
+      throw new AppError('Can only discard a revision when status is DRAFT', 400);
+    }
+
+    const allVersions = await prisma.soAVersion.findMany({
+      where: { soaDocumentId: doc.id },
+      orderBy: { version: 'desc' },
+    });
+
+    if (allVersions.length === 0) {
+      throw new AppError('No version entries found', 400);
+    }
+
+    const latestVersion = allVersions[0];
+
+    if (latestVersion.action !== 'Draft & Review') {
+      throw new AppError('Can only discard a revision that has not yet been submitted for review', 400);
+    }
+
+    const previousVersions = allVersions.filter(v => v.version < latestVersion.version);
+    if (previousVersions.length === 0) {
+      throw new AppError('Cannot discard — this is the initial version', 400);
+    }
+
+    const prevVersion = previousVersions[0].version;
+
+    await prisma.soAVersion.deleteMany({
+      where: { soaDocumentId: doc.id, version: latestVersion.version },
+    });
+
+    const updated = await prisma.soADocument.update({
+      where: { id: doc.id },
+      data: {
+        version: prevVersion,
+        approvalStatus: 'APPROVED',
+        updatedAt: new Date(),
+      },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'UPDATE',
+      entityType: 'SoADocument',
+      entityId: doc.id,
+      oldValues: { approvalStatus: 'DRAFT', version: latestVersion.version },
+      newValues: { approvalStatus: 'APPROVED', version: prevVersion },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json({
+      success: true,
+      data: updated,
+      message: `Revision v${latestVersion.version.toFixed(1)} discarded. Reverted to v${prevVersion.toFixed(1)} (APPROVED).`,
+    });
+  })
+);
+
+// Reject SoA document
+router.post(
+  '/document/reject',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId, reason } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+    if (!reason) throw new AppError('Rejection reason is required', 400);
+
+    const doc = await getOrCreateSoADocument(organizationId);
+
+    if (!['PENDING_FIRST_APPROVAL', 'PENDING_SECOND_APPROVAL'].includes(doc.approvalStatus)) {
+      throw new AppError(`SoA is not pending approval (current: ${doc.approvalStatus})`, 400);
+    }
+
+    // Only the stage-specific assignee (or global ADMIN) can reject
+    const isReviewer = doc.reviewerId === authReq.user.id;
+    const isApprover = doc.approverId === authReq.user.id;
+    const isGlobalAdmin = authReq.user.role === 'ADMIN';
+
+    if (!isGlobalAdmin) {
+      if (doc.approvalStatus === 'PENDING_FIRST_APPROVAL' && !isReviewer) {
+        throw new AppError('Only the assigned reviewer can reject at this stage', 403);
+      }
+      if (doc.approvalStatus === 'PENDING_SECOND_APPROVAL' && !isApprover) {
+        throw new AppError('Only the assigned approver can reject at this stage', 403);
+      }
+    }
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === organizationId
+    );
+    if (!membership && !isGlobalAdmin) {
+      throw new AppError('You are not a member of this organization', 403);
+    }
+
+    // Keep same version on rejection
+    const updated = await prisma.soADocument.update({
+      where: { id: doc.id },
+      data: { approvalStatus: 'REJECTED', updatedAt: new Date() },
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+      },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'REJECT',
+      entityType: 'SoADocument',
+      entityId: doc.id,
+      oldValues: { approvalStatus: doc.approvalStatus },
+      newValues: { approvalStatus: 'REJECTED', reason },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    // Notify reviewer (if approver rejected) or approver (if reviewer rejected)
+    const notifyUserId = updated.reviewerId && updated.reviewerId !== authReq.user.id
+      ? updated.reviewerId
+      : updated.approverId && updated.approverId !== authReq.user.id
+        ? updated.approverId
+        : null;
+
+    if (notifyUserId) {
+      await createNotification(
+        notifyUserId,
+        organizationId,
+        'soa_rejected',
+        'SoA Rejected',
+        `${authReq.user.firstName} ${authReq.user.lastName} has rejected the SoA: "${reason}"`,
+        '/soa?tab=approvals'
+      );
+    }
+
+    res.json({
+      success: true,
+      data: updated,
+      message: 'SoA rejected and sent back for revision.',
+    });
+  })
+);
+
+// ============================================
+// SOA ENTRY ROUTES
+// ============================================
+
+// Get Statement of Applicability entries
 router.get(
   '/',
   authenticate,
+  requirePermission('soa', 'view'),
   paginationQuery,
   validate,
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const {
       page = 1,
       limit = 200,
@@ -85,23 +711,13 @@ router.get(
       category,
       applicable,
       status,
-      approvalStatus,
       frameworkSlug,
       search,
       sortBy = 'controlId',
       sortOrder = 'asc',
     } = req.query;
 
-    if (!organizationId) {
-      throw new AppError('Organization ID is required', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
 
     const where: any = { organizationId };
     if (category) {
@@ -113,19 +729,9 @@ router.get(
     if (status) {
       where.status = status;
     }
-    if (approvalStatus) {
-      where.approvalStatus = approvalStatus;
-    }
-
-    // Filter by framework slug if provided
     if (frameworkSlug) {
-      where.control = {
-        ...where.control,
-        framework: { slug: frameworkSlug as string },
-      };
+      where.control = { ...where.control, framework: { slug: frameworkSlug as string } };
     }
-
-    // Search by control name or ID
     if (search) {
       where.control = {
         ...where.control,
@@ -152,9 +758,6 @@ router.get(
               implementationPercent: true,
             },
           },
-          _count: {
-            select: { versions: true },
-          },
         },
         orderBy: { control: { [sortBy as string]: sortOrder } },
         skip: (Number(page) - 1) * Number(limit),
@@ -166,7 +769,7 @@ router.get(
     // Calculate SoA statistics
     const allEntries = await prisma.soAEntry.findMany({
       where: { organizationId: organizationId as string },
-      select: { isApplicable: true, status: true, approvalStatus: true },
+      select: { isApplicable: true, status: true },
     });
 
     const stats = {
@@ -176,9 +779,6 @@ router.get(
       implemented: allEntries.filter(e => e.isApplicable && e.status === 'IMPLEMENTED').length,
       inProgress: allEntries.filter(e => e.isApplicable && e.status === 'IN_PROGRESS').length,
       notStarted: allEntries.filter(e => e.isApplicable && e.status === 'NOT_STARTED').length,
-      pendingApproval: allEntries.filter(e =>
-        e.approvalStatus === 'PENDING_FIRST_APPROVAL' || e.approvalStatus === 'PENDING_SECOND_APPROVAL'
-      ).length,
     };
 
     res.json({
@@ -199,20 +799,11 @@ router.get(
 router.get(
   '/export',
   authenticate,
+  requirePermission('soa', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId, format = 'json' } = req.query;
 
-    if (!organizationId) {
-      throw new AppError('Organization ID is required', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
 
     const organization = await prisma.organization.findUnique({
       where: { id: organizationId as string },
@@ -252,8 +843,6 @@ router.get(
         'Justification',
         'Documentation References',
         'Comments',
-        'Version',
-        'Approval Status',
       ].join(',');
 
       const rows = entries.map(e => [
@@ -268,8 +857,6 @@ router.get(
         `"${(e.justification || '').replace(/"/g, '""')}"`,
         `"${(e.documentationReferences || '').replace(/"/g, '""')}"`,
         `"${(e.comments || '').replace(/"/g, '""')}"`,
-        e.version.toFixed(1),
-        e.approvalStatus,
       ].join(','));
 
       res.setHeader('Content-Type', 'text/csv');
@@ -278,11 +865,9 @@ router.get(
     }
 
     const groupedByCategory = entries.reduce((acc: any, entry) => {
-      const category = entry.control.category;
-      if (!acc[category]) {
-        acc[category] = [];
-      }
-      acc[category].push(entry);
+      const cat = entry.control.category;
+      if (!acc[cat]) acc[cat] = [];
+      acc[cat].push(entry);
       return acc;
     }, {});
 
@@ -299,56 +884,6 @@ router.get(
         })),
         allEntries: entries,
       },
-    });
-  })
-);
-
-// Get pending approvals
-router.get(
-  '/pending-approvals',
-  authenticate,
-  asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
-    const { organizationId } = req.query;
-
-    if (!organizationId) {
-      throw new AppError('Organization ID is required', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
-
-    const pendingEntries = await prisma.soAEntry.findMany({
-      where: {
-        organizationId: organizationId as string,
-        approvalStatus: {
-          in: ['PENDING_FIRST_APPROVAL', 'PENDING_SECOND_APPROVAL'],
-        },
-      },
-      include: {
-        control: {
-          select: {
-            id: true,
-            controlId: true,
-            name: true,
-            description: true,
-            category: true,
-          },
-        },
-        _count: {
-          select: { versions: true },
-        },
-      },
-      orderBy: { updatedAt: 'desc' },
-    });
-
-    res.json({
-      success: true,
-      data: pendingEntries,
     });
   })
 );
@@ -378,15 +913,10 @@ router.get(
             implementationPercent: true,
           },
         },
-        _count: {
-          select: { versions: true },
-        },
       },
     });
 
-    if (!entry) {
-      throw new AppError('SoA entry not found', 404);
-    }
+    if (!entry) throw new AppError('SoA entry not found', 404);
 
     const membership = authReq.user.organizationMemberships.find(
       m => m.organizationId === entry.organizationId
@@ -395,52 +925,14 @@ router.get(
       throw new AppError('You are not authorized to view this entry', 403);
     }
 
-    res.json({
-      success: true,
-      data: entry,
-    });
-  })
-);
-
-// Get SoA entry version history
-router.get(
-  '/:id/versions',
-  authenticate,
-  uuidParam('id'),
-  validate,
-  asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const authReq = req as AuthenticatedRequest;
-
-    const entry = await prisma.soAEntry.findUnique({ where: { id } });
-    if (!entry) {
-      throw new AppError('SoA entry not found', 404);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === entry.organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not authorized to view this entry', 403);
-    }
-
-    const versions = await prisma.soAVersion.findMany({
-      where: { soaEntryId: id },
-      orderBy: { version: 'desc' },
-    });
-
-    res.json({
-      success: true,
-      data: versions,
-    });
+    res.json({ success: true, data: entry });
   })
 );
 
 // ============================================
-// UPDATE ROUTES
+// UPDATE SoA ENTRY (bumps document version)
 // ============================================
 
-// Update SoA entry
 router.patch(
   '/:id',
   authenticate,
@@ -454,19 +946,10 @@ router.patch(
       where: { id },
       include: { control: { select: { controlId: true, name: true } } },
     });
-    if (!existingEntry) {
-      throw new AppError('SoA entry not found', 404);
-    }
+    if (!existingEntry) throw new AppError('SoA entry not found', 404);
 
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === existingEntry.organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not authorized to update this entry', 403);
-    }
-
-    if (membership && !['ADMIN', 'LOCAL_ADMIN', 'AUDITOR'].includes(membership.role)) {
-      throw new AppError('Only admins and auditors can update SoA', 403);
+    if (!hasPermission(authReq.user, existingEntry.organizationId, 'soa', 'edit')) {
+      throw new AppError('You do not have permission to update SoA entries', 403);
     }
 
     const {
@@ -478,7 +961,6 @@ router.patch(
       documentationReferences,
       comments,
       controlSource,
-      changeDescription,
     } = req.body;
 
     const updateData: any = {};
@@ -491,40 +973,28 @@ router.patch(
     if (comments !== undefined) updateData.comments = comments;
     if (controlSource !== undefined) updateData.controlSource = controlSource;
 
-    // Reset approval status to DRAFT on edit if currently APPROVED
-    if (existingEntry.approvalStatus === 'APPROVED') {
-      updateData.approvalStatus = 'DRAFT';
-    }
-
-    // Bump minor version
-    const nextVersion = await getNextSoAVersion(id, false);
-    updateData.version = nextVersion;
-
     const entry = await prisma.soAEntry.update({
       where: { id },
       data: updateData,
       include: {
         control: {
-          select: {
-            id: true,
-            controlId: true,
-            name: true,
-            category: true,
-            implementationStatus: true,
-          },
+          select: { id: true, controlId: true, name: true, category: true, implementationStatus: true },
         },
       },
     });
 
-    // Create version entry for this update
-    await createSoAVersionEntry({
-      soaEntryId: id,
-      version: nextVersion,
-      changeDescription: changeDescription || `SoA entry updated: ${Object.keys(updateData).filter(k => !['version', 'approvalStatus'].includes(k)).join(', ')}`,
-      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
-      actorDesignation: membership?.role || authReq.user.role,
-      action: 'Updation',
-      createdById: authReq.user.id,
+    // Update document timestamp (no version bump — user controls versioning at submit time)
+    const doc = await getOrCreateSoADocument(existingEntry.organizationId);
+
+    const docUpdate: any = { updatedAt: new Date() };
+    // If doc was approved, reset to draft
+    if (doc.approvalStatus === 'APPROVED') {
+      docUpdate.approvalStatus = 'DRAFT';
+    }
+
+    await prisma.soADocument.update({
+      where: { id: doc.id },
+      data: docUpdate,
     });
 
     await createAuditLog({
@@ -537,17 +1007,13 @@ router.patch(
         controlId: existingEntry.control.controlId,
         isApplicable: existingEntry.isApplicable,
         status: existingEntry.status,
-        version: existingEntry.version,
       },
       newValues: updateData,
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
     });
 
-    res.json({
-      success: true,
-      data: entry,
-    });
+    res.json({ success: true, data: entry });
   })
 );
 
@@ -555,28 +1021,13 @@ router.patch(
 router.patch(
   '/bulk',
   authenticate,
+  requirePermission('soa', 'edit'),
   asyncHandler(async (req, res) => {
     const authReq = req as AuthenticatedRequest;
     const { organizationId, updates } = req.body;
 
-    if (!organizationId) {
-      throw new AppError('Organization ID is required', 400);
-    }
-
-    if (!Array.isArray(updates)) {
-      throw new AppError('Updates must be an array', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
-
-    if (membership && !['ADMIN', 'LOCAL_ADMIN', 'AUDITOR'].includes(membership.role)) {
-      throw new AppError('Only admins and auditors can update SoA', 403);
-    }
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+    if (!Array.isArray(updates)) throw new AppError('Updates must be an array', 400);
 
     const results = await prisma.$transaction(
       updates.map((update: any) =>
@@ -594,6 +1045,16 @@ router.patch(
       )
     );
 
+    // Update document timestamp (no version bump — user controls versioning at submit time)
+    const doc = await getOrCreateSoADocument(organizationId);
+
+    const docUpdate: any = { updatedAt: new Date() };
+    if (doc.approvalStatus === 'APPROVED') {
+      docUpdate.approvalStatus = 'DRAFT';
+    }
+
+    await prisma.soADocument.update({ where: { id: doc.id }, data: docUpdate });
+
     await createAuditLog({
       userId: authReq.user.id,
       organizationId,
@@ -604,370 +1065,23 @@ router.patch(
       userAgent: req.get('user-agent'),
     });
 
-    res.json({
-      success: true,
-      data: { updated: results.length },
-    });
+    res.json({ success: true, data: { updated: results.length } });
   })
 );
 
 // ============================================
-// APPROVAL WORKFLOW ROUTES
+// INITIALIZE
 // ============================================
 
-// Submit SoA entry for review
-router.post(
-  '/:id/submit-for-review',
-  authenticate,
-  uuidParam('id'),
-  validate,
-  asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const authReq = req as AuthenticatedRequest;
-    const { changeDescription } = req.body;
-
-    const entry = await prisma.soAEntry.findUnique({
-      where: { id },
-      include: { control: { select: { controlId: true, name: true } } },
-    });
-    if (!entry) {
-      throw new AppError('SoA entry not found', 404);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === entry.organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
-
-    if (membership?.role === 'VIEWER') {
-      throw new AppError('Viewers cannot submit SoA entries for review', 403);
-    }
-
-    if (entry.approvalStatus !== 'DRAFT' && entry.approvalStatus !== 'REJECTED') {
-      throw new AppError(`Entry cannot be submitted for review from ${entry.approvalStatus} status`, 400);
-    }
-
-    const nextVersion = await getNextSoAVersion(id, false);
-
-    const updatedEntry = await prisma.soAEntry.update({
-      where: { id },
-      data: {
-        approvalStatus: 'PENDING_FIRST_APPROVAL',
-        version: nextVersion,
-        updatedAt: new Date(),
-      },
-      include: {
-        control: {
-          select: { id: true, controlId: true, name: true, category: true },
-        },
-      },
-    });
-
-    await createSoAVersionEntry({
-      soaEntryId: id,
-      version: nextVersion,
-      changeDescription: changeDescription || `SoA entry submitted for review: ${entry.control.controlId} - ${entry.control.name}`,
-      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
-      actorDesignation: membership?.role || authReq.user.role,
-      action: 'Submitted for Review',
-      createdById: authReq.user.id,
-    });
-
-    await createAuditLog({
-      userId: authReq.user.id,
-      organizationId: entry.organizationId,
-      action: 'UPDATE',
-      entityType: 'SoA',
-      entityId: id,
-      oldValues: { approvalStatus: entry.approvalStatus },
-      newValues: { approvalStatus: 'PENDING_FIRST_APPROVAL' },
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-    });
-
-    res.json({
-      success: true,
-      data: updatedEntry,
-      message: 'SoA entry submitted for 1st level approval',
-    });
-  })
-);
-
-// First level approval (COO / LOCAL_ADMIN)
-router.post(
-  '/:id/first-approval',
-  authenticate,
-  uuidParam('id'),
-  validate,
-  asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const authReq = req as AuthenticatedRequest;
-    const { comments } = req.body;
-
-    const entry = await prisma.soAEntry.findUnique({
-      where: { id },
-      include: { control: { select: { controlId: true, name: true } } },
-    });
-    if (!entry) {
-      throw new AppError('SoA entry not found', 404);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === entry.organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
-
-    const allowedRoles = ['LOCAL_ADMIN', 'ADMIN'];
-    if (membership && !allowedRoles.includes(membership.role) && authReq.user.role !== 'ADMIN') {
-      throw new AppError('Only COO/Local Admin or higher can provide 1st level approval', 403);
-    }
-
-    if (entry.approvalStatus !== 'PENDING_FIRST_APPROVAL') {
-      throw new AppError(`Entry is not pending 1st level approval (current: ${entry.approvalStatus})`, 400);
-    }
-
-    const nextVersion = await getNextSoAVersion(id, false);
-
-    const updatedEntry = await prisma.soAEntry.update({
-      where: { id },
-      data: {
-        approvalStatus: 'PENDING_SECOND_APPROVAL',
-        version: nextVersion,
-        updatedAt: new Date(),
-      },
-      include: {
-        control: {
-          select: { id: true, controlId: true, name: true, category: true },
-        },
-      },
-    });
-
-    await createSoAVersionEntry({
-      soaEntryId: id,
-      version: nextVersion,
-      changeDescription: comments || `1st level approval granted for: ${entry.control.controlId}`,
-      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
-      actorDesignation: membership?.role || authReq.user.role,
-      action: '1st Level Approval',
-      approvedById: authReq.user.id,
-    });
-
-    await createAuditLog({
-      userId: authReq.user.id,
-      organizationId: entry.organizationId,
-      action: 'APPROVE',
-      entityType: 'SoA',
-      entityId: id,
-      oldValues: { approvalStatus: 'PENDING_FIRST_APPROVAL' },
-      newValues: { approvalStatus: 'PENDING_SECOND_APPROVAL', approvedBy: authReq.user.id },
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-    });
-
-    res.json({
-      success: true,
-      data: updatedEntry,
-      message: 'First level approval granted. Pending CEO/Admin approval.',
-    });
-  })
-);
-
-// Second level approval (CEO / ADMIN) - final approval
-router.post(
-  '/:id/second-approval',
-  authenticate,
-  uuidParam('id'),
-  validate,
-  asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const authReq = req as AuthenticatedRequest;
-    const { comments } = req.body;
-
-    const entry = await prisma.soAEntry.findUnique({
-      where: { id },
-      include: { control: { select: { controlId: true, name: true } } },
-    });
-    if (!entry) {
-      throw new AppError('SoA entry not found', 404);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === entry.organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
-
-    if (membership && membership.role !== 'ADMIN' && authReq.user.role !== 'ADMIN') {
-      throw new AppError('Only CEO/Admin can provide 2nd level approval', 403);
-    }
-
-    if (entry.approvalStatus !== 'PENDING_SECOND_APPROVAL') {
-      throw new AppError(`Entry is not pending 2nd level approval (current: ${entry.approvalStatus})`, 400);
-    }
-
-    const majorVersion = await getNextSoAVersion(id, true);
-
-    const updatedEntry = await prisma.soAEntry.update({
-      where: { id },
-      data: {
-        approvalStatus: 'APPROVED',
-        version: majorVersion,
-        updatedAt: new Date(),
-      },
-      include: {
-        control: {
-          select: { id: true, controlId: true, name: true, category: true },
-        },
-      },
-    });
-
-    await createSoAVersionEntry({
-      soaEntryId: id,
-      version: majorVersion,
-      changeDescription: comments || 'Approved Version',
-      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
-      actorDesignation: membership?.role || authReq.user.role,
-      action: '2nd Level Approval',
-      approvedById: authReq.user.id,
-    });
-
-    await createAuditLog({
-      userId: authReq.user.id,
-      organizationId: entry.organizationId,
-      action: 'APPROVE',
-      entityType: 'SoA',
-      entityId: id,
-      oldValues: { approvalStatus: 'PENDING_SECOND_APPROVAL', version: entry.version },
-      newValues: { approvalStatus: 'APPROVED', version: majorVersion, approvedBy: authReq.user.id },
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-    });
-
-    res.json({
-      success: true,
-      data: updatedEntry,
-      message: 'SoA entry fully approved. Version bumped to ' + majorVersion.toFixed(1),
-    });
-  })
-);
-
-// Reject SoA entry
-router.post(
-  '/:id/reject',
-  authenticate,
-  uuidParam('id'),
-  validate,
-  asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const authReq = req as AuthenticatedRequest;
-    const { reason } = req.body;
-
-    if (!reason) {
-      throw new AppError('Rejection reason is required', 400);
-    }
-
-    const entry = await prisma.soAEntry.findUnique({
-      where: { id },
-      include: { control: { select: { controlId: true, name: true } } },
-    });
-    if (!entry) {
-      throw new AppError('SoA entry not found', 404);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === entry.organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
-
-    const allowedRoles = ['LOCAL_ADMIN', 'ADMIN'];
-    if (membership && !allowedRoles.includes(membership.role) && authReq.user.role !== 'ADMIN') {
-      throw new AppError('Only Local Admin or Admin can reject SoA entries', 403);
-    }
-
-    if (!['PENDING_FIRST_APPROVAL', 'PENDING_SECOND_APPROVAL'].includes(entry.approvalStatus)) {
-      throw new AppError(`Entry is not pending approval (current: ${entry.approvalStatus})`, 400);
-    }
-
-    const nextVersion = await getNextSoAVersion(id, false);
-
-    const updatedEntry = await prisma.soAEntry.update({
-      where: { id },
-      data: {
-        approvalStatus: 'REJECTED',
-        version: nextVersion,
-        comments: `Rejected: ${reason}`,
-        updatedAt: new Date(),
-      },
-      include: {
-        control: {
-          select: { id: true, controlId: true, name: true, category: true },
-        },
-      },
-    });
-
-    await createSoAVersionEntry({
-      soaEntryId: id,
-      version: nextVersion,
-      changeDescription: `Rejected: ${reason}`,
-      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
-      actorDesignation: membership?.role || authReq.user.role,
-      action: 'Rejected',
-      approvedById: authReq.user.id,
-    });
-
-    await createAuditLog({
-      userId: authReq.user.id,
-      organizationId: entry.organizationId,
-      action: 'REJECT',
-      entityType: 'SoA',
-      entityId: id,
-      oldValues: { approvalStatus: entry.approvalStatus },
-      newValues: { approvalStatus: 'REJECTED', reason },
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-    });
-
-    res.json({
-      success: true,
-      data: updatedEntry,
-      message: 'SoA entry rejected and sent back for revision.',
-    });
-  })
-);
-
-// ============================================
-// INITIALIZE & BULK OPERATIONS
-// ============================================
-
-// Initialize SoA for organization
 router.post(
   '/initialize',
   authenticate,
+  requirePermission('soa', 'edit'),
   asyncHandler(async (req, res) => {
     const authReq = req as AuthenticatedRequest;
     const { organizationId } = req.body;
 
-    if (!organizationId) {
-      throw new AppError('Organization ID is required', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not authorized', 403);
-    }
-
-    if (membership && !['ADMIN', 'LOCAL_ADMIN'].includes(membership.role)) {
-      throw new AppError('Only admins can initialize SoA', 403);
-    }
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
 
     const controls = await prisma.control.findMany({
       where: { organizationId },
@@ -990,12 +1104,31 @@ router.post(
         justification: 'Pending review',
         status: 'IN_PROGRESS' as const,
         controlSource: 'Annex A ISO 27001:2022',
-        version: 0.1,
-        approvalStatus: 'DRAFT' as const,
       }));
 
     if (newEntries.length > 0) {
       await prisma.soAEntry.createMany({ data: newEntries });
+    }
+
+    // Ensure SoA document exists and create initial version
+    const doc = await getOrCreateSoADocument(organizationId);
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === organizationId
+    );
+
+    // Create initial version entry if none exists
+    const existingVersions = await prisma.soAVersion.count({ where: { soaDocumentId: doc.id } });
+    if (existingVersions === 0) {
+      await createDocVersionEntry({
+        soaDocumentId: doc.id,
+        version: 0.1,
+        changeDescription: 'Initial Version',
+        actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
+        actorDesignation: authReq.user.designation || membership?.role || authReq.user.role,
+        action: 'Draft & Review',
+        createdById: authReq.user.id,
+      });
     }
 
     await createAuditLog({
@@ -1015,69 +1148,6 @@ router.post(
         newEntriesCreated: newEntries.length,
         totalControls: controls.length,
       },
-    });
-  })
-);
-
-// Bulk submit all DRAFT entries for review
-router.post(
-  '/bulk-submit',
-  authenticate,
-  asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
-    const { organizationId } = req.body;
-
-    if (!organizationId) {
-      throw new AppError('Organization ID is required', 400);
-    }
-
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
-    }
-
-    if (membership?.role === 'VIEWER') {
-      throw new AppError('Viewers cannot submit SoA for review', 403);
-    }
-
-    const draftEntries = await prisma.soAEntry.findMany({
-      where: {
-        organizationId: organizationId as string,
-        approvalStatus: { in: ['DRAFT', 'REJECTED'] },
-      },
-    });
-
-    if (draftEntries.length === 0) {
-      throw new AppError('No draft entries to submit', 400);
-    }
-
-    await prisma.soAEntry.updateMany({
-      where: {
-        organizationId: organizationId as string,
-        approvalStatus: { in: ['DRAFT', 'REJECTED'] },
-      },
-      data: {
-        approvalStatus: 'PENDING_FIRST_APPROVAL',
-        updatedAt: new Date(),
-      },
-    });
-
-    await createAuditLog({
-      userId: authReq.user.id,
-      organizationId: organizationId as string,
-      action: 'UPDATE',
-      entityType: 'SoA',
-      newValues: { bulkSubmitted: draftEntries.length },
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-    });
-
-    res.json({
-      success: true,
-      data: { submitted: draftEntries.length },
-      message: `${draftEntries.length} SoA entries submitted for 1st level approval`,
     });
   })
 );

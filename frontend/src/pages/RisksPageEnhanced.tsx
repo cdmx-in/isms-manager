@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/stores/auth.store'
 import { Button } from '@/components/ui/button'
@@ -58,6 +59,8 @@ import {
   FileCheck,
   AlertTriangle,
   SlidersHorizontal,
+  Save,
+  X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import axiosInstance from '@/lib/api'
@@ -118,6 +121,7 @@ const getApprovalConfig = (status: string) =>
 // ============================================
 
 export default function RisksPage() {
+  const navigate = useNavigate()
   const { user, currentOrganizationId } = useAuthStore()
   const { toast } = useToast()
   const queryClient = useQueryClient()
@@ -133,7 +137,6 @@ export default function RisksPage() {
 
   const [searchTerm, setSearchTerm] = useState('')
   const [activeTab, setActiveTab] = useState('register')
-  const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [isEditOpen, setIsEditOpen] = useState(false)
   const [isTreatmentOpen, setIsTreatmentOpen] = useState(false)
   const [isRetireOpen, setIsRetireOpen] = useState(false)
@@ -166,6 +169,10 @@ export default function RisksPage() {
   const [approvalComments, setApprovalComments] = useState('')
   const [rejectReason, setRejectReason] = useState('')
   const [submitDescription, setSubmitDescription] = useState('')
+  const [isSubmitOpen, setIsSubmitOpen] = useState(false)
+  const [submitVersionBump, setSubmitVersionBump] = useState<'none' | 'minor' | 'major'>('none')
+  const [editingVersionId, setEditingVersionId] = useState<string | null>(null)
+  const [editingDescription, setEditingDescription] = useState('')
 
   // Column visibility toggles
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
@@ -321,11 +328,13 @@ export default function RisksPage() {
 
   // Approval workflow mutations
   const submitForReviewMutation = useMutation({
-    mutationFn: async ({ id, changeDescription }: { id: string; changeDescription: string }) =>
-      axiosInstance.post(`/risks/${id}/submit-for-review`, { changeDescription }),
+    mutationFn: async ({ id, changeDescription, versionBump }: { id: string; changeDescription: string; versionBump?: string }) =>
+      axiosInstance.post(`/risks/${id}/submit-for-review`, { changeDescription, versionBump }),
     onSuccess: (res) => {
       invalidateAll()
       toast({ title: res.data.message || 'Risk submitted for 1st level approval' })
+      setIsSubmitOpen(false)
+      setSubmitVersionBump('none')
     },
     onError: (err: any) => toast({ title: err.response?.data?.error?.message || 'Failed to submit for review', variant: 'destructive' }),
   })
@@ -364,6 +373,17 @@ export default function RisksPage() {
       setRejectReason('')
     },
     onError: (err: any) => toast({ title: err.response?.data?.error?.message || 'Failed to reject', variant: 'destructive' }),
+  })
+
+  const updateVersionDescriptionMutation = useMutation({
+    mutationFn: ({ riskId, versionId, changeDescription }: { riskId: string; versionId: string; changeDescription: string }) =>
+      axiosInstance.patch(`/risks/${riskId}/versions/${versionId}`, { changeDescription }),
+    onSuccess: () => {
+      invalidateAll()
+      setEditingVersionId(null)
+      toast({ title: 'Description updated' })
+    },
+    onError: (err: any) => toast({ title: err.response?.data?.error?.message || 'Failed to update description', variant: 'destructive' }),
   })
 
   // ============================================
@@ -436,8 +456,8 @@ export default function RisksPage() {
   const handleSubmitForReview = (risk: any) => {
     setSelectedRisk(risk)
     setSubmitDescription('')
-    const desc = `Submitting ${risk.riskId} for review`
-    submitForReviewMutation.mutate({ id: risk.id, changeDescription: desc })
+    setSubmitVersionBump('none')
+    setIsSubmitOpen(true)
   }
 
   const handleApproval = (risk: any) => {
@@ -499,7 +519,7 @@ export default function RisksPage() {
             Classification: Internal | ISMS-R-004 | Date: {formatDate(new Date())}
           </p>
         </div>
-        <Button onClick={() => setIsCreateOpen(true)}>
+        <Button onClick={() => navigate('/risks/new')}>
           <Plus className="mr-2 h-4 w-4" />
           Add Risk
         </Button>
@@ -1045,7 +1065,38 @@ export default function RisksPage() {
                                 {version.version.toFixed(1)}
                               </TableCell>
                               <TableCell>{formatDate(version.createdAt)}</TableCell>
-                              <TableCell className="max-w-[300px]">{version.changeDescription}</TableCell>
+                              <TableCell className="max-w-[300px]">
+                                {editingVersionId === version.id ? (
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      value={editingDescription}
+                                      onChange={(e) => setEditingDescription(e.target.value)}
+                                      className="h-8 text-sm"
+                                      autoFocus
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && selectedRisk) updateVersionDescriptionMutation.mutate({ riskId: selectedRisk.id, versionId: version.id, changeDescription: editingDescription })
+                                        if (e.key === 'Escape') setEditingVersionId(null)
+                                      }}
+                                    />
+                                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => selectedRisk && updateVersionDescriptionMutation.mutate({ riskId: selectedRisk.id, versionId: version.id, changeDescription: editingDescription })} disabled={!editingDescription.trim()}>
+                                      <Save className="h-3.5 w-3.5" />
+                                    </Button>
+                                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditingVersionId(null)}>
+                                      <X className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2 group">
+                                    <span>{version.changeDescription}</span>
+                                    <button
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-muted"
+                                      onClick={() => { setEditingVersionId(version.id); setEditingDescription(version.changeDescription) }}
+                                    >
+                                      <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                                    </button>
+                                  </div>
+                                )}
+                              </TableCell>
                               <TableCell>{version.actor}</TableCell>
                               <TableCell>
                                 <Badge
@@ -1136,111 +1187,6 @@ export default function RisksPage() {
       {/* ============================================ */}
       {/* DIALOGS                                       */}
       {/* ============================================ */}
-
-      {/* Create Risk Dialog */}
-      <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="sm:max-w-[900px] w-full mx-2 max-h-[85vh]">
-          <DialogHeader>
-            <DialogTitle>Create New Risk</DialogTitle>
-            <DialogDescription>Add a new risk to the register. It will be created as v0.1 Draft.</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4 overflow-auto max-h-[65vh]">
-            <div className="grid gap-2">
-              <Label htmlFor="title">Risk Item *</Label>
-              <Input
-                id="title"
-                value={formData.title}
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                placeholder="e.g., Flawed candidate reference check"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="description">Risk Description *</Label>
-              <Textarea
-                id="description"
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                rows={3}
-                placeholder="Describe the risk in detail"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label>Inherent Probability *</Label>
-                <Select
-                  value={formData.inherentProbability.toString()}
-                  onValueChange={(value) => setFormData({ ...formData, inherentProbability: parseInt(value) })}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {PROBABILITY_LABELS.map((prob) => (
-                      <SelectItem key={prob.value} value={prob.value.toString()}>
-                        {prob.value} - {prob.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label>Inherent Impact *</Label>
-                <Select
-                  value={formData.inherentImpact.toString()}
-                  onValueChange={(value) => setFormData({ ...formData, inherentImpact: parseInt(value) })}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {IMPACT_LABELS.map((impact) => (
-                      <SelectItem key={impact.value} value={impact.value.toString()}>
-                        {impact.value} - {impact.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid gap-2">
-              <Label>Control Description</Label>
-              <Textarea
-                value={formData.controlDescription}
-                onChange={(e) => setFormData({ ...formData, controlDescription: e.target.value })}
-                rows={2}
-                placeholder="Describe the controls to mitigate this risk"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Control Reference (ISO 27001 Annex A)</Label>
-              <Input
-                value={formData.controlsReference}
-                onChange={(e) => setFormData({ ...formData, controlsReference: e.target.value })}
-                placeholder="e.g., A 6.1 Screening, A 8.12 Data Leakage Prevention"
-              />
-            </div>
-            <div className="rounded-lg border p-4 bg-muted/50">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Inherent Risk Score</span>
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl font-bold">
-                    {formData.inherentProbability * formData.inherentImpact}
-                  </span>
-                  <Badge className={getRiskLevel(formData.inherentProbability * formData.inherentImpact).color}>
-                    {getRiskLevel(formData.inherentProbability * formData.inherentImpact).label}
-                  </Badge>
-                </div>
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateOpen(false)}>Cancel</Button>
-            <Button
-              onClick={handleCreate}
-              disabled={createMutation.isPending || !formData.title || !formData.description}
-            >
-              {createMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Create Risk (Draft)
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Edit Risk Dialog */}
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
@@ -1470,7 +1416,7 @@ export default function RisksPage() {
               Approve {selectedRisk?.riskId} - {selectedRisk?.title}
               {selectedRisk?.approvalStatus === 'PENDING_SECOND_APPROVAL' && (
                 <span className="block mt-1 text-green-600">
-                  This is the final approval. Version will be bumped to the next major version.
+                  This is the final approval. The risk will be marked as approved at v{selectedRisk?.version?.toFixed(1)}.
                 </span>
               )}
             </DialogDescription>
@@ -1483,15 +1429,6 @@ export default function RisksPage() {
               {selectedRisk?.residualRisk && (
                 <div><strong>Residual Risk:</strong> {selectedRisk.residualRisk}</div>
               )}
-            </div>
-            <div className="grid gap-2">
-              <Label>Approval Comments (optional)</Label>
-              <Textarea
-                value={approvalComments}
-                onChange={(e) => setApprovalComments(e.target.value)}
-                rows={3}
-                placeholder="Add any comments for this approval..."
-              />
             </div>
           </div>
           <DialogFooter>
@@ -1541,6 +1478,67 @@ export default function RisksPage() {
               {rejectMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               <XCircle className="mr-2 h-4 w-4" />
               Reject
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Submit for Review Dialog */}
+      <Dialog open={isSubmitOpen} onOpenChange={setIsSubmitOpen}>
+        <DialogContent className="sm:max-w-[600px] w-full mx-2">
+          <DialogHeader>
+            <DialogTitle>Submit for Review</DialogTitle>
+            <DialogDescription>
+              Submit {selectedRisk?.riskId} - {selectedRisk?.title} for approval workflow.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Version Bump</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {(['none', 'minor', 'major'] as const).map((opt) => (
+                  <Button
+                    key={opt}
+                    type="button"
+                    variant={submitVersionBump === opt ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setSubmitVersionBump(opt)}
+                  >
+                    {opt === 'none' ? 'Keep Current' : opt === 'minor' ? 'Minor' : 'Major'}
+                  </Button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Current: v{selectedRisk?.version?.toFixed(1)}
+                {submitVersionBump !== 'none' && ` → ${submitVersionBump} bump`}
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label>Description of Change *</Label>
+              <Textarea
+                value={submitDescription}
+                onChange={(e) => setSubmitDescription(e.target.value)}
+                rows={3}
+                placeholder="Describe the changes being submitted for review..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsSubmitOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (!selectedRisk || !submitDescription) return
+                submitForReviewMutation.mutate({
+                  id: selectedRisk.id,
+                  changeDescription: submitDescription,
+                  versionBump: submitVersionBump,
+                })
+              }}
+              disabled={submitForReviewMutation.isPending || !submitDescription}
+            >
+              {submitForReviewMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              <SendHorizontal className="mr-2 h-4 w-4" />
+              Submit for Review
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1624,7 +1622,38 @@ export default function RisksPage() {
                       )}>
                         <TableCell className="font-mono font-bold">{version.version.toFixed(1)}</TableCell>
                         <TableCell>{formatDate(version.createdAt)}</TableCell>
-                        <TableCell className="max-w-[250px]">{version.changeDescription}</TableCell>
+                        <TableCell className="max-w-[250px]">
+                          {editingVersionId === version.id ? (
+                            <div className="flex items-center gap-2">
+                              <Input
+                                value={editingDescription}
+                                onChange={(e) => setEditingDescription(e.target.value)}
+                                className="h-8 text-sm"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && selectedRisk) updateVersionDescriptionMutation.mutate({ riskId: selectedRisk.id, versionId: version.id, changeDescription: editingDescription })
+                                  if (e.key === 'Escape') setEditingVersionId(null)
+                                }}
+                              />
+                              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => selectedRisk && updateVersionDescriptionMutation.mutate({ riskId: selectedRisk.id, versionId: version.id, changeDescription: editingDescription })} disabled={!editingDescription.trim()}>
+                                <Save className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditingVersionId(null)}>
+                                <X className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2 group">
+                              <span>{version.changeDescription}</span>
+                              <button
+                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-muted"
+                                onClick={() => { setEditingVersionId(version.id); setEditingDescription(version.changeDescription) }}
+                              >
+                                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                              </button>
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell>{version.actor}</TableCell>
                         <TableCell>
                           <Badge

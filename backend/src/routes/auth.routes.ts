@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import passport from 'passport';
-import { prisma } from '../index.js';
+import { prisma, redisClient } from '../index.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { authenticate, generateTokens, verifyRefreshToken } from '../middleware/auth.js';
+import { authenticate, requirePermission, AuthenticatedRequest } from '../middleware/auth.js';
 import { createAuditLog } from '../services/audit.service.js';
+import { getLegacyPermissions } from '../constants/permissions.js';
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 
@@ -23,73 +25,12 @@ router.post('/login', (_req, res) => {
   });
 });
 
-// Refresh token
-router.post(
-  '/refresh',
-  asyncHandler(async (req, res) => {
-    const refreshToken = req.cookies['isms.refresh_token'] || req.body.refreshToken;
-
-    if (!refreshToken) {
-      throw new AppError('Refresh token is required', 401);
-    }
-
-    try {
-      const payload = verifyRefreshToken(refreshToken);
-
-      const user = await prisma.user.findUnique({
-        where: { id: payload.sub },
-        select: {
-          id: true,
-          email: true,
-          role: true,
-          isActive: true,
-        },
-      });
-
-      if (!user || !user.isActive) {
-        throw new AppError('Invalid refresh token', 401);
-      }
-
-      const tokens = generateTokens(user);
-
-      const isSecure = process.env.FRONTEND_URL?.startsWith('https') || process.env.NODE_ENV === 'production';
-
-      res.cookie('isms.access_token', tokens.accessToken, {
-        httpOnly: true,
-        secure: isSecure,
-        sameSite: 'lax',
-        maxAge: 15 * 60 * 1000,
-      });
-
-      res.cookie('isms.refresh_token', tokens.refreshToken, {
-        httpOnly: true,
-        secure: isSecure,
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
-
-      res.json({
-        success: true,
-        data: {
-          accessToken: tokens.accessToken,
-        },
-      });
-    } catch {
-      throw new AppError('Invalid refresh token', 401);
-    }
-  })
-);
-
-// Logout
+// Logout — destroy session in Redis
 router.post(
   '/logout',
   authenticate,
   asyncHandler(async (req, res) => {
-    // Clear cookies
-    res.clearCookie('isms.access_token');
-    res.clearCookie('isms.refresh_token');
-
-    // Audit log
+    // Audit log before destroying session
     await createAuditLog({
       userId: req.user!.id,
       action: 'LOGOUT',
@@ -98,6 +39,23 @@ router.post(
       ipAddress: req.ip,
       userAgent: req.get('user-agent'),
     });
+
+    // Passport logout
+    req.logout((err) => {
+      if (err) {
+        logger.error('Logout error:', err);
+      }
+    });
+
+    // Destroy session in Redis
+    req.session.destroy((err) => {
+      if (err) {
+        logger.error('Session destroy error:', err);
+      }
+    });
+
+    // Clear session cookie
+    res.clearCookie('isms.sid');
 
     res.json({
       success: true,
@@ -120,6 +78,7 @@ router.get(
         lastName: true,
         role: true,
         avatar: true,
+        designation: true,
         authProvider: true,
         isEmailVerified: true,
         createdAt: true,
@@ -134,14 +93,32 @@ router.get(
                 logo: true,
               },
             },
+            orgRole: {
+              select: {
+                id: true,
+                name: true,
+                permissions: true,
+              },
+            },
           },
         },
       },
     });
 
+    // Compute effective permissions per membership
+    const userData = user as any;
+    if (userData?.organizationMemberships) {
+      userData.organizationMemberships = userData.organizationMemberships.map((m: any) => ({
+        ...m,
+        effectivePermissions: m.orgRole
+          ? m.orgRole.permissions
+          : getLegacyPermissions(m.role),
+      }));
+    }
+
     res.json({
       success: true,
-      data: user,
+      data: userData,
     });
   })
 );
@@ -154,36 +131,18 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
       scope: ['profile', 'email', 'https://www.googleapis.com/auth/drive.readonly'],
       accessType: 'offline',
       prompt: 'consent',
-      session: false,
     } as any)
   );
 
   router.get(
     '/google/callback',
     passport.authenticate('google', {
-      session: false,
       failureRedirect: `${process.env.FRONTEND_URL}/login?error=google_auth_failed`,
     }),
     asyncHandler(async (req, res) => {
+      // passport.authenticate with sessions auto-calls req.login()
+      // which serializes user.id into the Redis session
       const user = req.user!;
-      const { accessToken, refreshToken } = generateTokens(user);
-
-      const isSecure = process.env.FRONTEND_URL?.startsWith('https') || process.env.NODE_ENV === 'production';
-
-      // Set cookies
-      res.cookie('isms.access_token', accessToken, {
-        httpOnly: true,
-        secure: isSecure,
-        sameSite: 'lax',
-        maxAge: 15 * 60 * 1000,
-      });
-
-      res.cookie('isms.refresh_token', refreshToken, {
-        httpOnly: true,
-        secure: isSecure,
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
 
       // Audit log
       await createAuditLog({
@@ -196,7 +155,7 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
         userAgent: req.get('user-agent'),
       });
 
-      // Redirect to frontend
+      // Redirect to frontend — isms.sid cookie is already set by express-session
       res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
     })
   );
@@ -208,6 +167,152 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     });
   });
 }
+
+// ============================================
+// SESSION MANAGEMENT (Admin)
+// ============================================
+
+// List active sessions for an organization's users
+router.get(
+  '/sessions',
+  authenticate,
+  requirePermission('users', 'view'),
+  asyncHandler(async (req, res) => {
+    const { organizationId } = req.query;
+
+    if (!organizationId) {
+      throw new AppError('Organization ID is required', 400);
+    }
+
+    // Get all users in this organization with their roles and last login
+    const members = await prisma.organizationMember.findMany({
+      where: { organizationId: organizationId as string },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+            avatar: true,
+            authProvider: true,
+            lastLoginAt: true,
+            isActive: true,
+            createdAt: true,
+          },
+        },
+        orgRole: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    // Scan Redis for active sessions and match to users
+    const sessionKeys = await redisClient.keys('isms:sess:*');
+    const activeSessions: { [userId: string]: { count: number; lastActive: string | null } } = {};
+
+    for (const key of sessionKeys) {
+      try {
+        const raw = await redisClient.get(key);
+        if (!raw) continue;
+        const sessionData = JSON.parse(raw as string);
+        const userId = sessionData?.passport?.user;
+        if (!userId) continue;
+
+        if (!activeSessions[userId]) {
+          activeSessions[userId] = { count: 0, lastActive: null };
+        }
+        activeSessions[userId].count++;
+
+        // Use cookie maxAge or session expiry as proxy for last active
+        if (sessionData.cookie?.expires) {
+          const expires = sessionData.cookie.expires;
+          if (!activeSessions[userId].lastActive || expires > activeSessions[userId].lastActive!) {
+            activeSessions[userId].lastActive = expires;
+          }
+        }
+      } catch {
+        // Skip malformed session data
+      }
+    }
+
+    const data = members.map((m: any) => ({
+      memberId: m.id,
+      user: m.user,
+      orgRole: m.orgRole,
+      legacyRole: m.role,
+      activeSessions: activeSessions[m.userId]?.count || 0,
+    }));
+
+    res.json({
+      success: true,
+      data,
+      summary: {
+        totalMembers: members.length,
+        totalActiveSessions: sessionKeys.length,
+      },
+    });
+  })
+);
+
+// Revoke all sessions for a specific user (admin action)
+router.delete(
+  '/sessions/:userId',
+  authenticate,
+  requirePermission('users', 'edit'),
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { userId } = req.params;
+
+    // Verify target user exists
+    const targetUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, firstName: true, lastName: true },
+    });
+
+    if (!targetUser) {
+      throw new AppError('User not found', 404);
+    }
+
+    // Scan Redis sessions and delete those belonging to this user
+    const sessionKeys = await redisClient.keys('isms:sess:*');
+    let revokedCount = 0;
+
+    for (const key of sessionKeys) {
+      try {
+        const raw = await redisClient.get(key);
+        if (!raw) continue;
+        const sessionData = JSON.parse(raw as string);
+        if (sessionData?.passport?.user === userId) {
+          await redisClient.del(key);
+          revokedCount++;
+        }
+      } catch {
+        // Skip malformed session data
+      }
+    }
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      action: 'DELETE',
+      entityType: 'Session',
+      entityId: userId,
+      newValues: { revokedSessions: revokedCount, targetUser: targetUser.email },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json({
+      success: true,
+      message: `Revoked ${revokedCount} session(s) for ${targetUser.firstName} ${targetUser.lastName}`,
+      data: { revokedCount },
+    });
+  })
+);
 
 // Password reset - disabled (Google OAuth only)
 router.post('/forgot-password', (_req, res) => {

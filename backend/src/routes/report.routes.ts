@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../index.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.js';
+import { authenticate, requirePermission } from '../middleware/auth.js';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 const router = Router();
@@ -10,20 +10,12 @@ const router = Router();
 router.get(
   '/soa',
   authenticate,
+  requirePermission('soa', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId, format = 'pdf' } = req.query;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    // Check membership
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const organization = await prisma.organization.findUnique({
@@ -39,126 +31,238 @@ router.get(
     });
 
     if (format === 'pdf') {
+      // Get SoA document metadata
+      const soaDoc = await prisma.soADocument.findUnique({
+        where: { organizationId: organizationId as string },
+        include: {
+          reviewer: { select: { firstName: true, lastName: true } },
+          approver: { select: { firstName: true, lastName: true } },
+        },
+      });
+
       const pdfDoc = await PDFDocument.create();
       const timesRomanFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
       const timesBoldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
 
+      // Use landscape A4 to fit table columns
+      const pageWidth = 841.89;
+      const pageHeight = 595.28;
+
       // Title page
-      let page = pdfDoc.addPage([595.28, 841.89]); // A4
-      const { height } = page.getSize();
+      let page = pdfDoc.addPage([pageWidth, pageHeight]);
 
       page.drawText('Statement of Applicability', {
         x: 50,
-        y: height - 100,
-        size: 24,
+        y: pageHeight - 60,
+        size: 22,
         font: timesBoldFont,
         color: rgb(0, 0.2, 0.4),
       });
 
       page.drawText(`Organization: ${organization?.name}`, {
         x: 50,
-        y: height - 140,
-        size: 14,
-        font: timesRomanFont,
-      });
-
-      page.drawText(`Generated: ${new Date().toLocaleDateString()}`, {
-        x: 50,
-        y: height - 160,
+        y: pageHeight - 90,
         size: 12,
         font: timesRomanFont,
       });
 
-      page.drawText(`ISO 27001:2022 Annex A Controls`, {
+      page.drawText(`Generated: ${new Date().toLocaleDateString()}  |  ISO 27001:2022 Annex A Controls`, {
         x: 50,
-        y: height - 200,
-        size: 14,
-        font: timesBoldFont,
+        y: pageHeight - 110,
+        size: 10,
+        font: timesRomanFont,
       });
+
+      // Document metadata
+      if (soaDoc) {
+        const statusLabel = soaDoc.approvalStatus === 'APPROVED' ? 'Approved' :
+          soaDoc.approvalStatus === 'DRAFT' ? 'Draft' :
+          soaDoc.approvalStatus === 'REJECTED' ? 'Rejected' : 'Pending Approval';
+        page.drawText(`Version: ${soaDoc.version.toFixed(1)}  |  Status: ${statusLabel}`, {
+          x: 50, y: pageHeight - 130, size: 10, font: timesRomanFont,
+        });
+        const reviewerName = soaDoc.reviewer ? `${soaDoc.reviewer.firstName} ${soaDoc.reviewer.lastName}` : 'Not Assigned';
+        const approverName = soaDoc.approver ? `${soaDoc.approver.firstName} ${soaDoc.approver.lastName}` : 'Not Assigned';
+        page.drawText(`Reviewer: ${reviewerName}  |  Approver: ${approverName}`, {
+          x: 50, y: pageHeight - 148, size: 10, font: timesRomanFont,
+        });
+      }
 
       // Statistics
       const applicable = entries.filter(e => e.isApplicable).length;
       const notApplicable = entries.filter(e => !e.isApplicable).length;
+      const implemented = entries.filter(e => e.isApplicable && e.status === 'IMPLEMENTED').length;
+      const inProgress = entries.filter(e => e.isApplicable && e.status === 'IN_PROGRESS').length;
 
-      page.drawText(`Total Controls: ${entries.length}`, {
-        x: 50,
-        y: height - 240,
-        size: 12,
-        font: timesRomanFont,
+      page.drawText(
+        `Total: ${entries.length}  |  Applicable: ${applicable}  |  Not Applicable: ${notApplicable}  |  Implemented: ${implemented}  |  In Progress: ${inProgress}`,
+        { x: 50, y: pageHeight - 175, size: 10, font: timesRomanFont }
+      );
+
+      // Draw line
+      page.drawLine({
+        start: { x: 50, y: pageHeight - 185 },
+        end: { x: pageWidth - 50, y: pageHeight - 185 },
+        thickness: 1,
+        color: rgb(0.7, 0.7, 0.7),
       });
 
-      page.drawText(`Applicable: ${applicable}`, {
-        x: 50,
-        y: height - 260,
-        size: 12,
-        font: timesRomanFont,
-      });
+      // Table columns matching the UI
+      const margin = 30;
+      const fontSize = 6;
+      const lineHeight = 8;
+      const columns = [
+        { label: 'Control No',      x: margin,       width: 45 },
+        { label: 'Control Name',    x: margin + 45,  width: 95 },
+        { label: 'Control',         x: margin + 140, width: 110 },
+        { label: 'Source',          x: margin + 250, width: 80 },
+        { label: 'Applicable',      x: margin + 330, width: 40 },
+        { label: 'Status',          x: margin + 370, width: 50 },
+        { label: 'Owner',           x: margin + 420, width: 55 },
+        { label: 'Justification',   x: margin + 475, width: 100 },
+        { label: 'Doc Ref',         x: margin + 575, width: 100 },
+        { label: 'Comments',        x: margin + 675, width: 107 },
+      ];
 
-      page.drawText(`Not Applicable: ${notApplicable}`, {
-        x: 50,
-        y: height - 280,
-        size: 12,
-        font: timesRomanFont,
-      });
-
-      // Controls list
-      let yPosition = height - 340;
-      const lineHeight = 14;
+      let yPosition = pageHeight - 205;
       let currentCategory = '';
 
-      for (const entry of entries) {
-        // Add new page if needed
-        if (yPosition < 80) {
-          page = pdfDoc.addPage([595.28, 841.89]);
-          yPosition = height - 50;
-        }
+      // Word-wrap text into lines that fit within colWidth
+      const wrapText = (text: string, colWidth: number, font: any, size: number): string[] => {
+        if (!text || text === '-') return [text || '-'];
+        const words = text.replace(/\n/g, ' ').split(' ');
+        const lines: string[] = [];
+        let currentLine = '';
 
+        for (const word of words) {
+          const testLine = currentLine ? `${currentLine} ${word}` : word;
+          const testWidth = font.widthOfTextAtSize(testLine, size);
+          if (testWidth > colWidth - 4 && currentLine) {
+            lines.push(currentLine);
+            currentLine = word;
+          } else {
+            currentLine = testLine;
+          }
+        }
+        if (currentLine) lines.push(currentLine);
+        return lines.length > 0 ? lines : ['-'];
+      };
+
+      // Helper to draw table header
+      const drawTableHeader = () => {
+        page.drawRectangle({
+          x: margin - 2,
+          y: yPosition - 3,
+          width: pageWidth - (margin * 2) + 4,
+          height: lineHeight + 4,
+          color: rgb(0.15, 0.3, 0.55),
+        });
+        columns.forEach(col => {
+          page.drawText(col.label, {
+            x: col.x + 2,
+            y: yPosition,
+            size: 6,
+            font: timesBoldFont,
+            color: rgb(1, 1, 1),
+          });
+        });
+        yPosition -= lineHeight + 6;
+      };
+
+      drawTableHeader();
+
+      const statusLabels: Record<string, string> = {
+        NOT_STARTED: 'Not Started',
+        IN_PROGRESS: 'In Progress',
+        IMPLEMENTED: 'Implemented',
+        NOT_APPLICABLE: 'N/A',
+      };
+
+      for (const entry of entries) {
         // Category header
         if (entry.control.category !== currentCategory) {
           currentCategory = entry.control.category;
-          yPosition -= 20;
+          yPosition -= 4;
 
-          if (yPosition < 100) {
-            page = pdfDoc.addPage([595.28, 841.89]);
-            yPosition = height - 50;
+          if (yPosition < 50) {
+            page = pdfDoc.addPage([pageWidth, pageHeight]);
+            yPosition = pageHeight - 40;
+            drawTableHeader();
           }
 
-          page.drawText(currentCategory, {
-            x: 50,
+          page.drawRectangle({
+            x: margin - 2,
+            y: yPosition - 3,
+            width: pageWidth - (margin * 2) + 4,
+            height: lineHeight + 4,
+            color: rgb(0.93, 0.95, 0.98),
+          });
+          page.drawText(currentCategory.replace('_', ' - '), {
+            x: margin,
             y: yPosition,
-            size: 12,
+            size: 7,
             font: timesBoldFont,
             color: rgb(0.2, 0.4, 0.6),
           });
-          yPosition -= lineHeight;
+          yPosition -= lineHeight + 6;
         }
 
-        // Control entry
-        const status = entry.isApplicable ? '✓' : '✗';
-        const controlText = `${status} ${entry.control.controlId}: ${entry.control.name.substring(0, 60)}`;
+        // Pre-calculate all wrapped text for this row to determine row height
+        const cellTexts = [
+          [entry.control.controlId],
+          wrapText(entry.control.name, columns[1].width, timesRomanFont, fontSize),
+          wrapText(entry.control.description || '-', columns[2].width, timesRomanFont, fontSize),
+          wrapText(entry.controlSource || 'Annex A', columns[3].width, timesRomanFont, fontSize),
+          [entry.isApplicable ? 'Yes' : 'No'],
+          [statusLabels[entry.status] || entry.status],
+          wrapText(entry.controlOwner || '-', columns[6].width, timesRomanFont, fontSize),
+          wrapText(entry.justification || '-', columns[7].width, timesRomanFont, fontSize),
+          wrapText(entry.documentationReferences || '-', columns[8].width, timesRomanFont, fontSize),
+          wrapText(entry.comments || '-', columns[9].width, timesRomanFont, fontSize),
+        ];
 
-        page.drawText(controlText, {
-          x: 60,
-          y: yPosition,
-          size: 10,
-          font: timesRomanFont,
-          color: entry.isApplicable ? rgb(0, 0.5, 0) : rgb(0.5, 0, 0),
+        const maxLines = Math.max(...cellTexts.map(lines => lines.length));
+        const rowHeight = maxLines * lineHeight + 4;
+
+        // New page if needed
+        if (yPosition - rowHeight < 40) {
+          page = pdfDoc.addPage([pageWidth, pageHeight]);
+          yPosition = pageHeight - 40;
+          drawTableHeader();
+        }
+
+        // Draw light row border
+        page.drawLine({
+          start: { x: margin - 2, y: yPosition - rowHeight + lineHeight - 1 },
+          end: { x: pageWidth - margin + 2, y: yPosition - rowHeight + lineHeight - 1 },
+          thickness: 0.3,
+          color: rgb(0.85, 0.85, 0.85),
         });
 
-        yPosition -= lineHeight;
+        // Draw each cell's wrapped lines
+        const cellColors = [
+          undefined, undefined, rgb(0.3, 0.3, 0.3), undefined,
+          entry.isApplicable ? rgb(0, 0.5, 0) : rgb(0.5, 0, 0),
+          undefined, undefined,
+          rgb(0.3, 0.3, 0.3), rgb(0.3, 0.3, 0.3), rgb(0.3, 0.3, 0.3),
+        ];
 
-        // Justification if not applicable
-        if (!entry.isApplicable && entry.justification) {
-          const justification = `   Justification: ${entry.justification.substring(0, 70)}`;
-          page.drawText(justification, {
-            x: 60,
-            y: yPosition,
-            size: 9,
-            font: timesRomanFont,
-            color: rgb(0.4, 0.4, 0.4),
-          });
-          yPosition -= lineHeight;
+        for (let colIdx = 0; colIdx < columns.length; colIdx++) {
+          const lines = cellTexts[colIdx];
+          const color = cellColors[colIdx];
+          for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+            const opts: any = {
+              x: columns[colIdx].x + 2,
+              y: yPosition - (lineIdx * lineHeight),
+              size: fontSize,
+              font: colIdx === 0 ? timesBoldFont : timesRomanFont,
+            };
+            if (color) opts.color = color;
+            page.drawText(lines[lineIdx], opts);
+          }
         }
+
+        yPosition -= rowHeight;
       }
 
       const pdfBytes = await pdfDoc.save();
@@ -184,20 +288,12 @@ router.get(
 router.get(
   '/risks',
   authenticate,
+  requirePermission('risks', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId, format = 'pdf' } = req.query;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    // Check membership
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const organization = await prisma.organization.findUnique({
@@ -340,20 +436,12 @@ router.get(
 router.get(
   '/compliance',
   authenticate,
+  requirePermission('dashboard', 'view'),
   asyncHandler(async (req, res) => {
-    const authReq = req as AuthenticatedRequest;
     const { organizationId, format = 'json' } = req.query;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
-    }
-
-    // Check membership
-    const membership = authReq.user.organizationMemberships.find(
-      m => m.organizationId === organizationId
-    );
-    if (!membership && authReq.user.role !== 'ADMIN') {
-      throw new AppError('You are not a member of this organization', 403);
     }
 
     const organization = await prisma.organization.findUnique({

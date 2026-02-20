@@ -37,6 +37,10 @@ import checklistRoutes from './routes/checklist.routes.js';
 import incidentKnowledgeRoutes from './routes/incidentKnowledge.routes.js';
 import changeRoutes from './routes/change.routes.js';
 import changeKnowledgeRoutes from './routes/changeKnowledge.routes.js';
+import roleRoutes from './routes/role.routes.js';
+import exemptionRoutes from './routes/exemption.routes.js';
+import notificationRoutes from './routes/notification.routes.js';
+import assessmentRoutes from './routes/assessment.routes.js';
 
 import { logger } from './utils/logger.js';
 import { initMinIO } from './services/storage.service.js';
@@ -47,7 +51,7 @@ export const prisma = new PrismaClient({
 });
 
 // Initialize Redis client
-const redisClient = createClient({
+export const redisClient = createClient({
   url: process.env.REDIS_URL || 'redis://localhost:6379',
 });
 
@@ -59,6 +63,9 @@ const app: Express = express();
 
 // Trust proxy (for nginx)
 app.set('trust proxy', 1);
+
+// Disable ETag to prevent 304 caching of API responses
+app.set('etag', false);
 
 // ============================================
 // SECURITY MIDDLEWARE (OWASP Top 10)
@@ -95,7 +102,7 @@ app.use(cors({
 // 3. Rate limiting (A04:2021 Insecure Design)
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per window
+  max: 1000, // Limit each IP to 1000 requests per window
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -104,7 +111,7 @@ const generalLimiter = rateLimit({
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // Limit each IP to 5 login attempts per window
+  max: 20, // Limit each IP to 20 login attempts per window
   message: { error: 'Too many login attempts, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -159,12 +166,13 @@ const initializeSession = async () => {
     secret: process.env.SESSION_SECRET || 'your-session-secret',
     resave: false,
     saveUninitialized: false,
+    rolling: true, // Auto-extend session TTL on each request
     name: 'isms.sid', // Custom cookie name (A02:2021 Cryptographic Failures)
     cookie: {
       secure: process.env.NODE_ENV === 'production',
       httpOnly: true, // Prevent XSS (A07:2021 XSS)
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      sameSite: 'strict', // CSRF protection (A01:2021)
+      sameSite: 'lax', // 'lax' required for Google OAuth callback redirect
       domain: process.env.NODE_ENV === 'production' ? process.env.COOKIE_DOMAIN : undefined,
     },
   }));
@@ -176,48 +184,17 @@ const initializeSession = async () => {
 };
 
 // ============================================
-// API ROUTES
+// API ROUTES (registered inside startServer after session init)
 // ============================================
 
-// Health check endpoint
+// Health check endpoint (no auth needed, register early)
 app.get('/api/health', (_req: Request, res: Response) => {
-  res.status(200).json({ 
+  res.status(200).json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
   });
 });
-
-// API routes
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/organizations', orgRoutes);
-app.use('/api/assets', assetRoutes);
-app.use('/api/risks', riskRoutes);
-app.use('/api/controls', controlRoutes);
-app.use('/api/drive', driveRoutes);
-app.use('/api/rag', ragRoutes);
-app.use('/api/soa', soaRoutes);
-app.use('/api/audits', auditRoutes);
-app.use('/api/incidents', incidentRoutes);
-app.use('/api/files', fileRoutes);
-app.use('/api/reports', reportRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/frameworks', frameworkRoutes);
-app.use('/api/checklist', checklistRoutes);
-app.use('/api/incident-knowledge', incidentKnowledgeRoutes);
-app.use('/api/changes', changeRoutes);
-app.use('/api/change-knowledge', changeKnowledgeRoutes);
-
-// ============================================
-// ERROR HANDLING
-// ============================================
-
-// 404 handler
-app.use(notFoundHandler);
-
-// Global error handler
-app.use(errorHandler);
 
 // ============================================
 // SERVER STARTUP
@@ -231,9 +208,38 @@ const startServer = async () => {
     await prisma.$connect();
     logger.info('Database connected successfully');
 
-    // Initialize session with Redis
+    // Initialize session with Redis (must come BEFORE routes)
     await initializeSession();
     logger.info('Redis session store initialized');
+
+    // Register API routes AFTER session middleware
+    app.use('/api/auth', authRoutes);
+    app.use('/api/users', userRoutes);
+    app.use('/api/organizations', orgRoutes);
+    app.use('/api/assets', assetRoutes);
+    app.use('/api/risks', riskRoutes);
+    app.use('/api/controls', controlRoutes);
+    app.use('/api/drive', driveRoutes);
+    app.use('/api/rag', ragRoutes);
+    app.use('/api/soa', soaRoutes);
+    app.use('/api/audits', auditRoutes);
+    app.use('/api/incidents', incidentRoutes);
+    app.use('/api/files', fileRoutes);
+    app.use('/api/reports', reportRoutes);
+    app.use('/api/dashboard', dashboardRoutes);
+    app.use('/api/frameworks', frameworkRoutes);
+    app.use('/api/checklist', checklistRoutes);
+    app.use('/api/incident-knowledge', incidentKnowledgeRoutes);
+    app.use('/api/changes', changeRoutes);
+    app.use('/api/change-knowledge', changeKnowledgeRoutes);
+    app.use('/api', roleRoutes);
+    app.use('/api/exemptions', exemptionRoutes);
+    app.use('/api/notifications', notificationRoutes);
+    app.use('/api/assessments', assessmentRoutes);
+
+    // Error handlers (must come after routes)
+    app.use(notFoundHandler);
+    app.use(errorHandler);
 
     // Initialize MinIO storage
     try {

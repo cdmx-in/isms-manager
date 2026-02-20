@@ -164,7 +164,8 @@ export function ChangesPage() {
       const result = await api.changeKnowledge.sync(currentOrganizationId, mode)
       setSyncJobId(result.jobId)
     } catch (err: any) {
-      const message = err?.response?.data?.error || err?.message || 'Sync failed'
+      const errorData = err?.response?.data?.error
+      const message = (typeof errorData === 'string' ? errorData : errorData?.message) || err?.message || 'Sync failed'
       setSyncError(message)
       setTimeout(() => setSyncError(null), 10000)
     }
