@@ -11,8 +11,10 @@ import { FrameworkControlsPage } from '@/pages/FrameworkControlsPage'
 import { PoliciesPage } from '@/pages/PoliciesPage'
 import { SoAPage } from '@/pages/SoAPage'
 import { IncidentsPage } from '@/pages/IncidentsPage'
+import { ChangesPage } from '@/pages/ChangesPage'
 import { AuditLogPage } from '@/pages/AuditLogPage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { UserManagementPage } from '@/pages/UserManagementPage'
 import { useEffect } from 'react'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -73,7 +75,9 @@ function App() {
           <Route path="policies" element={<PoliciesPage />} />
           <Route path="soa" element={<SoAPage />} />
           <Route path="incidents" element={<IncidentsPage />} />
+          <Route path="changes" element={<ChangesPage />} />
           <Route path="audit-log" element={<AuditLogPage />} />
+          <Route path="users" element={<UserManagementPage />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>
 

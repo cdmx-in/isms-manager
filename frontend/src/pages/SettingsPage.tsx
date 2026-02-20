@@ -25,7 +25,6 @@ import {
   Key,
   Loader2,
   Upload,
-  Users,
   Mail,
   Lock,
   AlertTriangle,
@@ -34,6 +33,7 @@ import {
   Plus,
   HardDrive,
   RefreshCw,
+  Users,
 } from 'lucide-react'
 
 export function SettingsPage() {
@@ -51,11 +51,6 @@ export function SettingsPage() {
     currentPassword: '',
     newPassword: '',
     confirmPassword: '',
-  })
-
-  const [orgData, setOrgData] = useState({
-    name: '',
-    description: '',
   })
 
   const [newFolder, setNewFolder] = useState({ driveId: '', name: '', folderType: 'POLICIES' })
@@ -431,29 +426,13 @@ export function SettingsPage() {
               <CardHeader>
                 <CardTitle>Team Members</CardTitle>
                 <CardDescription>
-                  Manage users in your organization
+                  Add, remove, and manage user roles for your organization
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 border rounded-lg">
-                    <div className="flex items-center gap-4">
-                      <Avatar>
-                        <AvatarFallback>{initials}</AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="font-medium">
-                          {user?.firstName} {user?.lastName}
-                        </p>
-                        <p className="text-sm text-muted-foreground">{user?.email}</p>
-                      </div>
-                    </div>
-                    <Badge>{currentOrg?.role}</Badge>
-                  </div>
-                </div>
-                <Button className="mt-4" variant="outline">
+                <Button variant="outline" onClick={() => window.location.href = '/users'}>
                   <Users className="mr-2 h-4 w-4" />
-                  Invite Members
+                  Manage Users
                 </Button>
               </CardContent>
             </Card>

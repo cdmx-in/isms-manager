@@ -7,7 +7,7 @@ import { itopService } from '../services/itop.service.js';
 
 const router = Router();
 
-// Get incidents from iTop
+// Get changes from iTop
 router.get(
   '/',
   authenticate,
@@ -20,17 +20,15 @@ router.get(
       limit = 50,
       organizationId,
       status,
-      severity,
       search,
       team,
-      origin,
+      changeType,
     } = req.query;
 
     if (!organizationId) {
       throw new AppError('Organization ID is required', 400);
     }
 
-    // Check membership
     const membership = authReq.user.organizationMemberships.find(
       m => m.organizationId === organizationId
     );
@@ -38,37 +36,29 @@ router.get(
       throw new AppError('You are not a member of this organization', 403);
     }
 
-    const result = await itopService.getIncidents({
+    const result = await itopService.getChanges({
       status: status as string | undefined,
       search: search as string | undefined,
       team: team as string | undefined,
-      origin: origin as string | undefined,
+      changeType: changeType as string | undefined,
       limit: Number(limit),
       page: Number(page),
     });
 
-    // Apply severity filter client-side (iTop uses priority, not severity)
-    let filteredData = result.data;
-    let filteredTotal = result.total;
-    if (severity) {
-      filteredData = filteredData.filter((inc: any) => inc.severity === severity);
-      filteredTotal = filteredData.length;
-    }
-
     res.json({
       success: true,
-      data: filteredData,
+      data: result.data,
       pagination: {
         page: Number(page),
         limit: Number(limit),
-        total: filteredTotal,
-        totalPages: Math.ceil(filteredTotal / Number(limit)),
+        total: result.total,
+        totalPages: Math.ceil(result.total / Number(limit)),
       },
     });
   })
 );
 
-// Get incident statistics from iTop
+// Get change statistics from iTop
 router.get(
   '/stats',
   authenticate,
@@ -80,7 +70,6 @@ router.get(
       throw new AppError('Organization ID is required', 400);
     }
 
-    // Check membership
     const membership = authReq.user.organizationMemberships.find(
       m => m.organizationId === organizationId
     );
@@ -88,7 +77,7 @@ router.get(
       throw new AppError('You are not a member of this organization', 403);
     }
 
-    const stats = await itopService.getIncidentStats();
+    const stats = await itopService.getChangeStats();
 
     res.json({
       success: true,

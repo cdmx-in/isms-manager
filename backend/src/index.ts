@@ -34,6 +34,9 @@ import reportRoutes from './routes/report.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import frameworkRoutes from './routes/framework.routes.js';
 import checklistRoutes from './routes/checklist.routes.js';
+import incidentKnowledgeRoutes from './routes/incidentKnowledge.routes.js';
+import changeRoutes from './routes/change.routes.js';
+import changeKnowledgeRoutes from './routes/changeKnowledge.routes.js';
 
 import { logger } from './utils/logger.js';
 import { initMinIO } from './services/storage.service.js';
@@ -202,6 +205,9 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/frameworks', frameworkRoutes);
 app.use('/api/checklist', checklistRoutes);
+app.use('/api/incident-knowledge', incidentKnowledgeRoutes);
+app.use('/api/changes', changeRoutes);
+app.use('/api/change-knowledge', changeKnowledgeRoutes);
 
 // ============================================
 // ERROR HANDLING

@@ -25,18 +25,15 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
-  DialogDescription,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { formatDateTime } from '@/lib/utils'
 import {
   Search,
-  AlertCircle,
   Loader2,
   Filter,
   CheckCircle2,
   XCircle,
-  AlertTriangle,
   Activity,
   ExternalLink,
   Eye,
@@ -45,10 +42,6 @@ import {
   Info,
   User,
   Users,
-  Phone,
-  Shield,
-  Zap,
-  Tag,
   Brain,
   RefreshCw,
   MessageSquare,
@@ -56,58 +49,43 @@ import {
   Send,
   Copy,
   Database,
+  GitBranch,
+  Clock,
+  ShieldCheck,
+  ArrowUpCircle,
+  CircleDot,
+  PauseCircle,
+  FileText,
+  AlertTriangle,
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
 import { cn } from '@/lib/utils'
+import ReactMarkdown from 'react-markdown'
 
-const incidentStatuses = [
-  { value: 'REPORTED', label: 'Reported', icon: AlertCircle, color: 'text-blue-500', bgColor: 'bg-blue-500' },
-  { value: 'INVESTIGATING', label: 'Investigating', icon: Activity, color: 'text-yellow-500', bgColor: 'bg-yellow-500' },
-  { value: 'RESOLVED', label: 'Resolved', icon: CheckCircle2, color: 'text-green-500', bgColor: 'bg-green-500' },
-  { value: 'CLOSED', label: 'Closed', icon: XCircle, color: 'text-gray-500', bgColor: 'bg-gray-500' },
+const changeStatuses = [
+  { value: 'NEW', label: 'New', icon: CircleDot, color: 'text-blue-500', bgColor: 'bg-blue-500' },
+  { value: 'PLANNED', label: 'Planned', icon: Clock, color: 'text-indigo-500', bgColor: 'bg-indigo-500' },
+  { value: 'APPROVED', label: 'Approved', icon: ShieldCheck, color: 'text-emerald-500', bgColor: 'bg-emerald-500' },
+  { value: 'IMPLEMENTED', label: 'Implemented', icon: ArrowUpCircle, color: 'text-orange-500', bgColor: 'bg-orange-500' },
+  { value: 'MONITORED', label: 'Monitored', icon: Activity, color: 'text-yellow-500', bgColor: 'bg-yellow-500' },
+  { value: 'CLOSED', label: 'Closed', icon: CheckCircle2, color: 'text-gray-500', bgColor: 'bg-gray-500' },
+  { value: 'REJECTED', label: 'Rejected', icon: XCircle, color: 'text-red-500', bgColor: 'bg-red-500' },
 ]
 
-const severityLevels = [
-  { value: 'CRITICAL', label: 'Critical', color: 'destructive' },
-  { value: 'HIGH', label: 'High', color: 'warning' },
-  { value: 'MEDIUM', label: 'Medium', color: 'default' },
-  { value: 'LOW', label: 'Low', color: 'success' },
-]
-
-const priorityLabels: Record<string, string> = {
-  '1': 'Critical',
-  '2': 'High',
-  '3': 'Medium',
-  '4': 'Low',
+const changeTypeLabels: Record<string, string> = {
+  'NormalChange': 'Normal',
+  'RoutineChange': 'Routine',
+  'EmergencyChange': 'Emergency',
 }
 
-const impactLabels: Record<string, string> = {
-  '1': 'High',
-  '2': 'Medium',
-  '3': 'Low',
-}
-
-const teamOptions = ['Security', 'TechOps', 'Tech Support', 'Administration']
-const originOptions = [
-  { value: 'monitoring', label: 'Monitoring' },
-  { value: 'portal', label: 'Portal' },
-  { value: 'phone', label: 'Phone' },
-  { value: 'mail', label: 'Email' },
-  { value: 'chat', label: 'Chat' },
-  { value: 'in_person', label: 'In Person' },
-]
-
-export function IncidentsPage() {
+export function ChangesPage() {
   const { currentOrganizationId } = useAuthStore()
 
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('')
-  const [severityFilter, setSeverityFilter] = useState<string>('')
   const [teamFilter, setTeamFilter] = useState<string>('')
-  const [originFilter, setOriginFilter] = useState<string>('')
   const [page, setPage] = useState(1)
   const [limit, setLimit] = useState(20)
-  const [selectedIncident, setSelectedIncident] = useState<any>(null)
+  const [selectedChange, setSelectedChange] = useState<any>(null)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
 
   // Knowledge Base state
@@ -119,18 +97,16 @@ export function IncidentsPage() {
   const [kbSearching, setKbSearching] = useState(false)
   const [kbAsking, setKbAsking] = useState(false)
   const [syncJobId, setSyncJobId] = useState<string | null>(null)
-  const [similarIncidents, setSimilarIncidents] = useState<any[]>([])
+  const [similarChanges, setSimilarChanges] = useState<any[]>([])
   const [loadingSimilar, setLoadingSimilar] = useState(false)
 
   const { data: response, isLoading } = useQuery({
-    queryKey: ['incidents', currentOrganizationId, search, statusFilter, severityFilter, teamFilter, originFilter, page, limit],
+    queryKey: ['changes', currentOrganizationId, search, statusFilter, teamFilter, page, limit],
     queryFn: () =>
-      api.incidents.list(currentOrganizationId!, {
+      api.changes.list(currentOrganizationId!, {
         search: search || undefined,
         status: statusFilter || undefined,
-        severity: severityFilter || undefined,
         team: teamFilter || undefined,
-        origin: originFilter || undefined,
         page,
         limit,
       }),
@@ -138,23 +114,23 @@ export function IncidentsPage() {
   })
 
   const { data: stats } = useQuery({
-    queryKey: ['incident-stats', currentOrganizationId],
-    queryFn: () => api.incidents.stats(currentOrganizationId!),
+    queryKey: ['change-stats', currentOrganizationId],
+    queryFn: () => api.changes.stats(currentOrganizationId!),
     enabled: !!currentOrganizationId,
   })
 
   // Knowledge Base status query
   const { data: kbStatus, refetch: refetchKbStatus } = useQuery({
-    queryKey: ['kb-status', currentOrganizationId],
-    queryFn: () => api.incidentKnowledge.status(currentOrganizationId!),
+    queryKey: ['change-kb-status', currentOrganizationId],
+    queryFn: () => api.changeKnowledge.status(currentOrganizationId!),
     enabled: !!currentOrganizationId,
     refetchInterval: syncJobId ? 3000 : false,
   })
 
   // Poll sync job progress
   const { data: syncJob } = useQuery({
-    queryKey: ['sync-job', syncJobId],
-    queryFn: () => api.incidentKnowledge.syncStatus(syncJobId!),
+    queryKey: ['change-sync-job', syncJobId],
+    queryFn: () => api.changeKnowledge.syncStatus(syncJobId!),
     enabled: !!syncJobId,
     refetchInterval: 2000,
   })
@@ -167,17 +143,15 @@ export function IncidentsPage() {
     }
   }, [syncJob?.status])
 
-  const incidents = response?.data || []
+  const changes = response?.data || []
   const pagination = response?.pagination
 
-  const activeFilterCount = [statusFilter, severityFilter, teamFilter, originFilter, search].filter(Boolean).length
+  const activeFilterCount = [statusFilter, teamFilter, search].filter(Boolean).length
 
   const clearAllFilters = () => {
     setSearch('')
     setStatusFilter('')
-    setSeverityFilter('')
     setTeamFilter('')
-    setOriginFilter('')
     setPage(1)
   }
 
@@ -187,7 +161,7 @@ export function IncidentsPage() {
     if (!currentOrganizationId) return
     setSyncError(null)
     try {
-      const result = await api.incidentKnowledge.sync(currentOrganizationId, mode)
+      const result = await api.changeKnowledge.sync(currentOrganizationId, mode)
       setSyncJobId(result.jobId)
     } catch (err: any) {
       const message = err?.response?.data?.error || err?.message || 'Sync failed'
@@ -201,7 +175,7 @@ export function IncidentsPage() {
     setKbSearching(true)
     setKbSearchResults([])
     try {
-      const results = await api.incidentKnowledge.search(currentOrganizationId, kbQuery, 10)
+      const results = await api.changeKnowledge.search(currentOrganizationId, kbQuery, 10)
       setKbSearchResults(results)
     } catch (err) {
       console.error('KB search failed:', err)
@@ -215,7 +189,7 @@ export function IncidentsPage() {
     setKbAsking(true)
     setKbAnswer(null)
     try {
-      const result = await api.incidentKnowledge.ask(currentOrganizationId, kbQuery)
+      const result = await api.changeKnowledge.ask(currentOrganizationId, kbQuery)
       setKbAnswer(result)
     } catch (err) {
       console.error('KB ask failed:', err)
@@ -227,10 +201,10 @@ export function IncidentsPage() {
   const handleFindSimilar = async (itopId: string) => {
     if (!currentOrganizationId) return
     setLoadingSimilar(true)
-    setSimilarIncidents([])
+    setSimilarChanges([])
     try {
-      const results = await api.incidentKnowledge.similar(currentOrganizationId, itopId, 5)
-      setSimilarIncidents(results)
+      const results = await api.changeKnowledge.similar(currentOrganizationId, itopId, 5)
+      setSimilarChanges(results)
     } catch (err) {
       console.error('Find similar failed:', err)
     } finally {
@@ -239,15 +213,12 @@ export function IncidentsPage() {
   }
 
   const getStatusInfo = (status: string) => {
-    return incidentStatuses.find((s) => s.value === status) || incidentStatuses[0]
+    return changeStatuses.find((s) => s.value === status) || changeStatuses[0]
   }
 
-  const getSeverityInfo = (severity: string) => {
-    return severityLevels.find((s) => s.value === severity) || severityLevels[2]
-  }
-
-  const handleViewDetail = (incident: any) => {
-    setSelectedIncident(incident)
+  const handleViewDetail = (change: any) => {
+    setSelectedChange(change)
+    setSimilarChanges([])
     setIsDetailOpen(true)
   }
 
@@ -256,9 +227,9 @@ export function IncidentsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Incident Management</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Change Management</h1>
           <p className="text-muted-foreground">
-            Security incidents from iTop
+            Change requests from iTop
           </p>
         </div>
         <a
@@ -277,7 +248,7 @@ export function IncidentsPage() {
         <div className="flex items-center gap-2">
           <Info className="h-5 w-5 text-blue-500" />
           <p className="text-sm text-blue-700 dark:text-blue-300">
-            Incidents are fetched from iTop. This is a read-only view. To manage incidents, please use{' '}
+            Changes are fetched from iTop. This is a read-only view. To manage changes, please use{' '}
             <a href="https://help.cdmx.in" target="_blank" rel="noopener noreferrer" className="font-medium underline">
               iTop (help.cdmx.in)
             </a>{' '}
@@ -290,8 +261,8 @@ export function IncidentsPage() {
       <div className="grid gap-4 md:grid-cols-5">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Incidents</CardTitle>
-            <AlertCircle className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Total Changes</CardTitle>
+            <GitBranch className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats?.total?.toLocaleString() || 0}</div>
@@ -305,37 +276,37 @@ export function IncidentsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-yellow-600">{stats?.open?.toLocaleString() || 0}</div>
-            <p className="text-xs text-muted-foreground">Requiring attention</p>
+            <p className="text-xs text-muted-foreground">In progress</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Critical Open</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-red-500" />
+            <CardTitle className="text-sm font-medium">Approved</CardTitle>
+            <ShieldCheck className="h-4 w-4 text-emerald-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600">{stats?.critical || 0}</div>
-            <p className="text-xs text-muted-foreground">High priority</p>
+            <div className="text-2xl font-bold text-emerald-600">{stats?.byStatus?.APPROVED || 0}</div>
+            <p className="text-xs text-muted-foreground">Ready for implementation</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Resolved</CardTitle>
-            <CheckCircle2 className="h-4 w-4 text-green-500" />
+            <CardTitle className="text-sm font-medium">Implemented</CardTitle>
+            <ArrowUpCircle className="h-4 w-4 text-orange-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">{stats?.byStatus?.RESOLVED?.toLocaleString() || 0}</div>
-            <p className="text-xs text-muted-foreground">Successfully resolved</p>
+            <div className="text-2xl font-bold text-orange-600">{stats?.byStatus?.IMPLEMENTED || 0}</div>
+            <p className="text-xs text-muted-foreground">Deployed</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Closed</CardTitle>
-            <XCircle className="h-4 w-4 text-gray-500" />
+            <CheckCircle2 className="h-4 w-4 text-gray-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-gray-600">{stats?.byStatus?.CLOSED?.toLocaleString() || 0}</div>
-            <p className="text-xs text-muted-foreground">Completed &amp; closed</p>
+            <p className="text-xs text-muted-foreground">Completed</p>
           </CardContent>
         </Card>
       </div>
@@ -354,9 +325,9 @@ export function IncidentsPage() {
               <div>
                 <CardTitle className="text-base">AI Knowledge Base</CardTitle>
                 <CardDescription>
-                  {kbStatus?.indexedIncidents
-                    ? `${kbStatus.indexedIncidents.toLocaleString()} incidents indexed`
-                    : 'Semantic search & Q&A over incident history'}
+                  {kbStatus?.indexedChanges
+                    ? `${kbStatus.indexedChanges.toLocaleString()} changes indexed`
+                    : 'Semantic search & Q&A over change history'}
                   {kbStatus?.lastSync?.completedAt && (
                     <span className="ml-2 text-xs">
                       Last synced: {new Date(kbStatus.lastSync.completedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}
@@ -379,7 +350,7 @@ export function IncidentsPage() {
               )}
               {(() => {
                 const isSyncing = !!syncJobId || kbStatus?.lastSync?.status === 'running'
-                return kbStatus?.indexedIncidents ? (
+                return kbStatus?.indexedChanges ? (
                   <div className="flex items-center">
                     <Button
                       variant="outline"
@@ -400,12 +371,12 @@ export function IncidentsPage() {
                       className="rounded-l-none px-2"
                       onClick={(e) => {
                         e.stopPropagation()
-                        if (confirm('Full sync will re-index all incidents. This may take 20-30 minutes and uses OpenAI API credits. Continue?')) {
+                        if (confirm('Full sync will re-index all changes. This uses OpenAI API credits. Continue?')) {
                           handleSync('full')
                         }
                       }}
                       disabled={isSyncing}
-                      title="Full re-sync (re-index all incidents)"
+                      title="Full re-sync (re-index all changes)"
                     >
                       <Database className="h-3.5 w-3.5" />
                     </Button>
@@ -433,17 +404,17 @@ export function IncidentsPage() {
             <div className="mt-3">
               <Progress value={(syncJob.progress / syncJob.total) * 100} className="h-2" />
               <p className="text-xs text-muted-foreground mt-1">
-                Processing {syncJob.progress.toLocaleString()} of {syncJob.total.toLocaleString()} incidents...
+                Processing {syncJob.progress.toLocaleString()} of {syncJob.total.toLocaleString()} changes...
               </p>
             </div>
           )}
         </CardHeader>
         {kbExpanded && (
           <CardContent className="pt-0">
-            {!kbStatus?.indexedIncidents ? (
+            {!kbStatus?.indexedChanges ? (
               <div className="text-center py-6 text-muted-foreground">
                 <Database className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">No incidents indexed yet. Click "Initial Sync" to start building the knowledge base.</p>
+                <p className="text-sm">No changes indexed yet. Click "Initial Sync" to start building the knowledge base.</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -476,7 +447,7 @@ export function IncidentsPage() {
                   <div className="relative flex-1">
                     <Sparkles className="absolute left-3 top-3 h-4 w-4 text-purple-400" />
                     <Input
-                      placeholder={kbTab === 'search' ? 'Search by meaning, e.g. "SQL injection attacks on portal"...' : 'Ask a question, e.g. "What types of monitoring incidents are most common?"...'}
+                      placeholder={kbTab === 'search' ? 'Search by meaning, e.g. "vulnerability patching changes"...' : 'Ask a question, e.g. "What types of changes require outage windows?"...'}
                       value={kbQuery}
                       onChange={(e) => setKbQuery(e.target.value)}
                       onKeyDown={(e) => {
@@ -523,8 +494,8 @@ export function IncidentsPage() {
                         <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{result.content?.substring(0, 200)}</p>
                         <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                           {result.metadata?.team && <span>Team: {result.metadata.team}</span>}
-                          {result.metadata?.severity && <span>Severity: {result.metadata.severity}</span>}
-                          {result.metadata?.origin && <span>Origin: {result.metadata.origin}</span>}
+                          {result.metadata?.changeType && <span>Type: {changeTypeLabels[result.metadata.changeType] || result.metadata.changeType}</span>}
+                          {result.metadata?.impact && <span>Impact: {result.metadata.impact}</span>}
                         </div>
                       </div>
                     ))}
@@ -579,119 +550,72 @@ export function IncidentsPage() {
       {/* Filters */}
       <Card>
         <CardContent className="pt-6">
-          <div className="space-y-3">
-            {/* Row 1: Search + Status + Severity */}
-            <div className="flex gap-3">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search by title or reference..."
-                  value={search}
-                  onChange={(e) => {
-                    setSearch(e.target.value)
-                    setPage(1)
-                  }}
-                  className="pl-10"
-                />
-              </div>
-              <Select
-                value={statusFilter || 'all'}
-                onValueChange={(v) => {
-                  setStatusFilter(v === 'all' ? '' : v)
+          <div className="flex gap-3 items-center">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by title or reference..."
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value)
                   setPage(1)
                 }}
-              >
-                <SelectTrigger className="w-[160px]">
-                  <Filter className="mr-2 h-4 w-4" />
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Statuses</SelectItem>
-                  {incidentStatuses.map((status) => (
-                    <SelectItem key={status.value} value={status.value}>
-                      {status.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={severityFilter || 'all'}
-                onValueChange={(v) => {
-                  setSeverityFilter(v === 'all' ? '' : v)
-                  setPage(1)
-                }}
-              >
-                <SelectTrigger className="w-[150px]">
-                  <SelectValue placeholder="Severity" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Severities</SelectItem>
-                  {severityLevels.map((level) => (
-                    <SelectItem key={level.value} value={level.value}>
-                      {level.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                className="pl-10"
+              />
             </div>
-            {/* Row 2: Team + Origin + Clear */}
-            <div className="flex gap-3 items-center">
-              <Select
-                value={teamFilter || 'all'}
-                onValueChange={(v) => {
-                  setTeamFilter(v === 'all' ? '' : v)
-                  setPage(1)
-                }}
-              >
-                <SelectTrigger className="w-[160px]">
-                  <Users className="mr-2 h-4 w-4" />
-                  <SelectValue placeholder="Team" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Teams</SelectItem>
-                  {teamOptions.map((team) => (
-                    <SelectItem key={team} value={team}>
-                      {team}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={originFilter || 'all'}
-                onValueChange={(v) => {
-                  setOriginFilter(v === 'all' ? '' : v)
-                  setPage(1)
-                }}
-              >
-                <SelectTrigger className="w-[150px]">
-                  <SelectValue placeholder="Origin" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Origins</SelectItem>
-                  {originOptions.map((origin) => (
-                    <SelectItem key={origin.value} value={origin.value}>
-                      {origin.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {activeFilterCount > 0 && (
-                <Button variant="ghost" size="sm" onClick={clearAllFilters} className="text-muted-foreground hover:text-foreground">
-                  <XCircle className="mr-1.5 h-3.5 w-3.5" />
-                  Clear filters ({activeFilterCount})
-                </Button>
-              )}
-            </div>
+            <Select
+              value={statusFilter || 'all'}
+              onValueChange={(v) => {
+                setStatusFilter(v === 'all' ? '' : v)
+                setPage(1)
+              }}
+            >
+              <SelectTrigger className="w-[170px]">
+                <Filter className="mr-2 h-4 w-4" />
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                {changeStatuses.map((status) => (
+                  <SelectItem key={status.value} value={status.value}>
+                    {status.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={teamFilter || 'all'}
+              onValueChange={(v) => {
+                setTeamFilter(v === 'all' ? '' : v)
+                setPage(1)
+              }}
+            >
+              <SelectTrigger className="w-[160px]">
+                <Users className="mr-2 h-4 w-4" />
+                <SelectValue placeholder="Team" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Teams</SelectItem>
+                <SelectItem value="techops@cdmx.in">TechOps</SelectItem>
+                <SelectItem value="Security">Security</SelectItem>
+              </SelectContent>
+            </Select>
+            {activeFilterCount > 0 && (
+              <Button variant="ghost" size="sm" onClick={clearAllFilters} className="text-muted-foreground hover:text-foreground">
+                <XCircle className="mr-1.5 h-3.5 w-3.5" />
+                Clear ({activeFilterCount})
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
 
-      {/* Incidents Table */}
+      {/* Changes Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Incidents</CardTitle>
+          <CardTitle>Changes</CardTitle>
           <CardDescription>
-            {pagination ? `${pagination.total.toLocaleString()} incidents found` : 'Loading...'}
+            {pagination ? `${pagination.total.toLocaleString()} changes found` : 'Loading...'}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -706,48 +630,47 @@ export function IncidentsPage() {
                   <TableRow>
                     <TableHead>Reference</TableHead>
                     <TableHead className="min-w-[300px]">Title</TableHead>
-                    <TableHead>Severity</TableHead>
+                    <TableHead>Type</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Impact</TableHead>
                     <TableHead>Team</TableHead>
                     <TableHead>Agent</TableHead>
-                    <TableHead>Origin</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead className="w-[50px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {incidents.length === 0 ? (
+                  {changes.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={9} className="text-center py-8">
-                        <p className="text-muted-foreground">No incidents found</p>
+                        <p className="text-muted-foreground">No changes found</p>
                         <p className="text-sm text-muted-foreground mt-1">
-                          {search || statusFilter || severityFilter
+                          {search || statusFilter || teamFilter
                             ? 'Try adjusting your filters'
-                            : 'No incidents in iTop for this organization'}
+                            : 'No changes in iTop for this organization'}
                         </p>
                       </TableCell>
                     </TableRow>
                   ) : (
-                    incidents.map((incident: any) => {
-                      const statusInfo = getStatusInfo(incident.status)
-                      const severityInfo = getSeverityInfo(incident.severity)
+                    changes.map((change: any) => {
+                      const statusInfo = getStatusInfo(change.status)
                       const StatusIcon = statusInfo.icon
                       return (
-                        <TableRow key={incident.id} className="cursor-pointer hover:bg-muted/50" onClick={() => handleViewDetail(incident)}>
+                        <TableRow key={change.id} className="cursor-pointer hover:bg-muted/50" onClick={() => handleViewDetail(change)}>
                           <TableCell>
                             <span className="font-mono text-xs text-muted-foreground">
-                              {incident.ref}
+                              {change.ref}
                             </span>
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <div className={cn('w-2 h-2 rounded-full flex-shrink-0', statusInfo.bgColor)} />
-                              <span className="font-medium truncate max-w-[400px]">{incident.title}</span>
+                              <span className="font-medium truncate max-w-[400px]">{change.title}</span>
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Badge variant={severityInfo.color as any}>
-                              {severityInfo.label}
+                            <Badge variant="outline" className="text-xs">
+                              {changeTypeLabels[change.changeType] || change.changeType}
                             </Badge>
                           </TableCell>
                           <TableCell>
@@ -756,15 +679,11 @@ export function IncidentsPage() {
                               <span className="text-sm">{statusInfo.label}</span>
                             </div>
                           </TableCell>
-                          <TableCell className="text-sm">{incident.team || '-'}</TableCell>
-                          <TableCell className="text-sm">{incident.agent || '-'}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="capitalize text-xs">
-                              {incident.origin || '-'}
-                            </Badge>
-                          </TableCell>
+                          <TableCell className="text-sm">{change.impact || '-'}</TableCell>
+                          <TableCell className="text-sm">{change.team || '-'}</TableCell>
+                          <TableCell className="text-sm">{change.agent || '-'}</TableCell>
                           <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                            {incident.startDate ? formatDateTime(incident.startDate) : '-'}
+                            {change.startDate ? formatDateTime(change.startDate) : '-'}
                           </TableCell>
                           <TableCell>
                             <Button
@@ -772,7 +691,7 @@ export function IncidentsPage() {
                               size="icon"
                               onClick={(e) => {
                                 e.stopPropagation()
-                                handleViewDetail(incident)
+                                handleViewDetail(change)
                               }}
                             >
                               <Eye className="h-4 w-4" />
@@ -843,13 +762,12 @@ export function IncidentsPage() {
         </CardContent>
       </Card>
 
-      {/* Incident Detail Dialog - Wide Split View */}
+      {/* Change Detail Dialog */}
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
         <DialogContent className="sm:max-w-[1100px] max-h-[90vh] overflow-hidden p-0" aria-describedby={undefined}>
-          <DialogTitle className="sr-only">Incident Details</DialogTitle>
-          {selectedIncident && (() => {
-            const statusInfo = getStatusInfo(selectedIncident.status)
-            const severityInfo = getSeverityInfo(selectedIncident.severity)
+          <DialogTitle className="sr-only">Change Details</DialogTitle>
+          {selectedChange && (() => {
+            const statusInfo = getStatusInfo(selectedChange.status)
             const StatusIcon = statusInfo.icon
             return (
               <>
@@ -858,18 +776,20 @@ export function IncidentsPage() {
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs px-2 py-0.5 rounded bg-muted border">{selectedIncident.ref}</span>
-                        <Badge variant="outline" className="capitalize text-xs">{selectedIncident.origin}</Badge>
+                        <span className="font-mono text-xs px-2 py-0.5 rounded bg-muted border">{selectedChange.ref}</span>
+                        <Badge variant="outline" className="capitalize text-xs">
+                          {changeTypeLabels[selectedChange.changeType] || selectedChange.changeType}
+                        </Badge>
                       </div>
-                      <h2 className="text-lg font-semibold leading-tight">{selectedIncident.title}</h2>
+                      <h2 className="text-lg font-semibold leading-tight">{selectedChange.title}</h2>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      {kbStatus?.indexedIncidents > 0 && (
+                      {kbStatus?.indexedChanges > 0 && (
                         <Button
                           variant="outline"
                           size="sm"
                           className="text-xs gap-1.5"
-                          onClick={() => handleFindSimilar(selectedIncident.itopId)}
+                          onClick={() => handleFindSimilar(selectedChange.itopId)}
                           disabled={loadingSimilar}
                         >
                           {loadingSimilar ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 text-purple-500" />}
@@ -890,17 +810,23 @@ export function IncidentsPage() {
                   {/* Status badges row */}
                   <div className="flex items-center gap-3 mt-3">
                     <div className={cn('inline-flex items-center gap-1.5 text-sm font-medium px-2.5 py-1 rounded-full border', {
-                      'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950 dark:border-blue-800 dark:text-blue-300': selectedIncident.status === 'REPORTED',
-                      'bg-yellow-50 border-yellow-200 text-yellow-700 dark:bg-yellow-950 dark:border-yellow-800 dark:text-yellow-300': selectedIncident.status === 'INVESTIGATING',
-                      'bg-green-50 border-green-200 text-green-700 dark:bg-green-950 dark:border-green-800 dark:text-green-300': selectedIncident.status === 'RESOLVED',
-                      'bg-gray-50 border-gray-200 text-gray-700 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-300': selectedIncident.status === 'CLOSED',
+                      'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950 dark:border-blue-800 dark:text-blue-300': selectedChange.status === 'NEW',
+                      'bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-950 dark:border-indigo-800 dark:text-indigo-300': selectedChange.status === 'PLANNED',
+                      'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-300': selectedChange.status === 'APPROVED',
+                      'bg-orange-50 border-orange-200 text-orange-700 dark:bg-orange-950 dark:border-orange-800 dark:text-orange-300': selectedChange.status === 'IMPLEMENTED',
+                      'bg-yellow-50 border-yellow-200 text-yellow-700 dark:bg-yellow-950 dark:border-yellow-800 dark:text-yellow-300': selectedChange.status === 'MONITORED',
+                      'bg-gray-50 border-gray-200 text-gray-700 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-300': selectedChange.status === 'CLOSED',
+                      'bg-red-50 border-red-200 text-red-700 dark:bg-red-950 dark:border-red-800 dark:text-red-300': selectedChange.status === 'REJECTED',
                     })}>
                       <StatusIcon className="h-3.5 w-3.5" />
                       {statusInfo.label}
                     </div>
-                    <Badge variant={severityInfo.color as any} className="text-xs">
-                      P{selectedIncident.priority} - {severityInfo.label}
-                    </Badge>
+                    {selectedChange.outage !== 'no' && (
+                      <Badge variant="destructive" className="text-xs">
+                        <AlertTriangle className="h-3 w-3 mr-1" />
+                        Outage
+                      </Badge>
+                    )}
                   </div>
                 </div>
 
@@ -911,33 +837,33 @@ export function IncidentsPage() {
                   <div className="col-span-2 p-5 overflow-y-auto space-y-5">
                     {/* Classification */}
                     <div>
-                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Classification</h4>
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Details</h4>
                       <div className="space-y-3">
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-red-50 dark:bg-red-950">
-                            <Zap className="h-4 w-4 text-red-500" />
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Priority</p>
-                            <p className="text-sm font-medium">{priorityLabels[selectedIncident.priority] || selectedIncident.priority} (P{selectedIncident.priority})</p>
-                          </div>
-                        </div>
                         <div className="flex items-center gap-3">
                           <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-orange-50 dark:bg-orange-950">
                             <AlertTriangle className="h-4 w-4 text-orange-500" />
                           </div>
                           <div>
                             <p className="text-xs text-muted-foreground">Impact</p>
-                            <p className="text-sm font-medium">{impactLabels[selectedIncident.impact] || selectedIncident.impact}</p>
+                            <p className="text-sm font-medium">{selectedChange.impact || '-'}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-3">
-                          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-yellow-50 dark:bg-yellow-950">
-                            <Activity className="h-4 w-4 text-yellow-500" />
+                          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-red-50 dark:bg-red-950">
+                            <PauseCircle className="h-4 w-4 text-red-500" />
                           </div>
                           <div>
-                            <p className="text-xs text-muted-foreground">Urgency</p>
-                            <p className="text-sm font-medium">{priorityLabels[selectedIncident.urgency] || selectedIncident.urgency}</p>
+                            <p className="text-xs text-muted-foreground">Outage</p>
+                            <p className="text-sm font-medium capitalize">{selectedChange.outage || 'No'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-purple-50 dark:bg-purple-950">
+                            <GitBranch className="h-4 w-4 text-purple-500" />
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">Change Type</p>
+                            <p className="text-sm font-medium">{changeTypeLabels[selectedChange.changeType] || selectedChange.changeType}</p>
                           </div>
                         </div>
                       </div>
@@ -953,7 +879,7 @@ export function IncidentsPage() {
                           </div>
                           <div>
                             <p className="text-xs text-muted-foreground">Team</p>
-                            <p className="text-sm font-medium">{selectedIncident.team || '-'}</p>
+                            <p className="text-sm font-medium">{selectedChange.team || '-'}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-3">
@@ -962,42 +888,26 @@ export function IncidentsPage() {
                           </div>
                           <div>
                             <p className="text-xs text-muted-foreground">Agent</p>
-                            <p className="text-sm font-medium">{selectedIncident.agent || '-'}</p>
+                            <p className="text-sm font-medium">{selectedChange.agent || '-'}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-3">
-                          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-purple-50 dark:bg-purple-950">
-                            <Phone className="h-4 w-4 text-purple-500" />
+                          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-teal-50 dark:bg-teal-950">
+                            <User className="h-4 w-4 text-teal-500" />
                           </div>
                           <div>
                             <p className="text-xs text-muted-foreground">Caller</p>
-                            <p className="text-sm font-medium">{selectedIncident.caller || '-'}</p>
+                            <p className="text-sm font-medium">{selectedChange.caller || '-'}</p>
                           </div>
                         </div>
-                      </div>
-                    </div>
-
-                    {/* Service */}
-                    <div>
-                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Service</h4>
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-teal-50 dark:bg-teal-950">
-                            <Shield className="h-4 w-4 text-teal-500" />
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Service</p>
-                            <p className="text-sm font-medium">{selectedIncident.service || '-'}</p>
-                          </div>
-                        </div>
-                        {selectedIncident.serviceSubcategory && (
+                        {selectedChange.supervisor && (
                           <div className="flex items-center gap-3">
-                            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gray-50 dark:bg-gray-800">
-                              <Tag className="h-4 w-4 text-gray-500" />
+                            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950">
+                              <ShieldCheck className="h-4 w-4 text-emerald-500" />
                             </div>
                             <div>
-                              <p className="text-xs text-muted-foreground">Subcategory</p>
-                              <p className="text-sm font-medium">{selectedIncident.serviceSubcategory}</p>
+                              <p className="text-xs text-muted-foreground">Supervisor</p>
+                              <p className="text-sm font-medium">{selectedChange.supervisor}</p>
                             </div>
                           </div>
                         )}
@@ -1012,18 +922,16 @@ export function IncidentsPage() {
                       <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Timeline</h4>
                       <div className="relative pl-6 space-y-0">
                         {[
-                          { label: 'Started', date: selectedIncident.startDate, color: 'bg-blue-500' },
-                          { label: 'Assigned', date: selectedIncident.assignmentDate, color: 'bg-indigo-500' },
-                          { label: 'Resolved', date: selectedIncident.resolutionDate, color: 'bg-green-500' },
-                          { label: 'Closed', date: selectedIncident.closeDate, color: 'bg-gray-500' },
-                          { label: 'Last Updated', date: selectedIncident.lastUpdate, color: 'bg-slate-400' },
+                          { label: 'Created', date: selectedChange.creationDate, color: 'bg-blue-500' },
+                          { label: 'Start', date: selectedChange.startDate, color: 'bg-indigo-500' },
+                          { label: 'End', date: selectedChange.endDate, color: 'bg-orange-500' },
+                          { label: 'Closed', date: selectedChange.closeDate, color: 'bg-gray-500' },
+                          { label: 'Last Updated', date: selectedChange.lastUpdate, color: 'bg-slate-400' },
                         ].map((item, idx, arr) => (
                           <div key={item.label} className="relative pb-4 last:pb-0">
-                            {/* Vertical line */}
                             {idx < arr.length - 1 && (
                               <div className="absolute left-[-16px] top-[10px] bottom-0 w-px bg-border" />
                             )}
-                            {/* Dot */}
                             <div className={cn(
                               'absolute left-[-20px] top-[6px] w-[9px] h-[9px] rounded-full border-2 border-background',
                               item.date ? item.color : 'bg-muted border-muted-foreground/20'
@@ -1040,25 +948,38 @@ export function IncidentsPage() {
                     </div>
 
                     {/* Description */}
-                    {selectedIncident.description && (
+                    {selectedChange.description && (
                       <div>
                         <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Description</h4>
                         <div
                           className="text-sm prose prose-sm dark:prose-invert max-w-none rounded-lg border p-4 bg-muted/20 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-0 [&_p]:text-sm [&_p]:leading-relaxed"
-                          dangerouslySetInnerHTML={{ __html: selectedIncident.description }}
+                          dangerouslySetInnerHTML={{ __html: selectedChange.description }}
                         />
                       </div>
                     )}
 
-                    {/* Similar Incidents */}
-                    {similarIncidents.length > 0 && (
+                    {/* Fallback Plan */}
+                    {selectedChange.fallback && (
+                      <div>
+                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                          <FileText className="h-3.5 w-3.5 inline mr-1" />
+                          Fallback Plan
+                        </h4>
+                        <div className="text-sm rounded-lg border p-4 bg-yellow-50/50 dark:bg-yellow-950/20">
+                          {selectedChange.fallback}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Similar Changes */}
+                    {similarChanges.length > 0 && (
                       <div>
                         <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
                           <Sparkles className="h-3.5 w-3.5 inline mr-1 text-purple-500" />
-                          Similar Incidents
+                          Similar Changes
                         </h4>
                         <div className="space-y-2">
-                          {similarIncidents.map((sim: any, idx: number) => (
+                          {similarChanges.map((sim: any, idx: number) => (
                             <div key={idx} className="rounded-lg border p-3 text-sm hover:bg-muted/50 transition-colors">
                               <div className="flex items-center justify-between mb-1">
                                 <span className="font-mono text-xs text-muted-foreground">{sim.ref}</span>

@@ -116,18 +116,19 @@ export const generateEmbeddings = async (texts: string[]): Promise<number[][]> =
 // DOCUMENT INDEXING PIPELINE
 // ============================================
 
-export const indexDocument = async (documentId: string): Promise<{ chunkCount: number }> => {
+export const indexDocument = async (documentId: string, userAccessToken?: string): Promise<{ chunkCount: number }> => {
   const doc = await prisma.driveDocument.findUnique({ where: { id: documentId } });
   if (!doc) throw new Error(`Document not found: ${documentId}`);
 
   logger.info(`Indexing document: ${doc.name} (${doc.driveFileId})`);
 
-  const buffer = await downloadFile(doc.driveFileId);
+  const buffer = await downloadFile(doc.driveFileId, userAccessToken);
 
   let text: string;
   if (doc.mimeType === 'application/pdf') {
     text = await extractTextFromPdf(buffer);
   } else {
+    // Google Docs exports and other text files
     text = buffer.toString('utf-8');
   }
 
@@ -179,21 +180,66 @@ export const indexDocument = async (documentId: string): Promise<{ chunkCount: n
 };
 
 export const indexAllDocuments = async (
-  organizationId: string
+  organizationId: string,
+  userAccessToken?: string
 ): Promise<{ indexed: number; errors: number; totalChunks: number }> => {
-  const documents = await prisma.driveDocument.findMany({
-    where: { organizationId, isIndexed: false, mimeType: 'application/pdf' },
-  });
+  const supportedMimeTypes = [
+    'application/pdf',
+    'application/vnd.google-apps.document',
+    'application/vnd.google-apps.spreadsheet',
+    'application/vnd.google-apps.presentation',
+  ];
+
+  // Get documents that need indexing: not yet indexed OR modified since last index
+  const [unindexed, stale] = await Promise.all([
+    prisma.driveDocument.findMany({
+      where: {
+        organizationId,
+        isIndexed: false,
+        mimeType: { in: supportedMimeTypes },
+      },
+    }),
+    // Catch any docs modified after indexing (safety net)
+    prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "DriveDocument"
+      WHERE "organizationId" = ${organizationId}
+        AND "isIndexed" = true
+        AND "driveModifiedAt" IS NOT NULL
+        AND "indexedAt" IS NOT NULL
+        AND "driveModifiedAt" > "indexedAt"
+        AND "mimeType" = ANY(${supportedMimeTypes})
+    `,
+  ]);
+
+  // Mark stale docs for re-indexing
+  if (stale.length > 0) {
+    const staleIds = stale.map(d => d.id);
+    await prisma.driveDocument.updateMany({
+      where: { id: { in: staleIds } },
+      data: { isIndexed: false },
+    });
+    logger.info(`Found ${stale.length} stale documents needing re-indexing`);
+  }
+
+  // Merge: unindexed + stale (deduplicated)
+  const unindexedIds = new Set(unindexed.map(d => d.id));
+  const staleFullDocs = stale.length > 0
+    ? await prisma.driveDocument.findMany({
+        where: { id: { in: stale.filter(s => !unindexedIds.has(s.id)).map(s => s.id) } },
+      })
+    : [];
+  const documents = [...unindexed, ...staleFullDocs];
 
   let indexed = 0, errors = 0, totalChunks = 0;
 
   for (const doc of documents) {
     try {
-      const result = await indexDocument(doc.id);
+      const result = await indexDocument(doc.id, userAccessToken);
       indexed++;
       totalChunks += result.chunkCount;
-    } catch (error) {
-      logger.error(`Error indexing ${doc.name}:`, error);
+    } catch (error: any) {
+      const msg = error.message || String(error);
+      logger.error(`Error indexing ${doc.name}: ${msg}`);
       errors++;
       await prisma.driveDocument.update({
         where: { id: doc.id },

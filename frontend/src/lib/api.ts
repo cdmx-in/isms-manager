@@ -68,6 +68,12 @@ export const organizationApi = {
   create: (data: { name: string; description?: string }) => axiosInstance.post('/organizations', data),
   update: (id: string, data: any) => axiosInstance.patch(`/organizations/${id}`, data),
   delete: (id: string) => axiosInstance.delete(`/organizations/${id}`),
+  addMember: (orgId: string, data: { email: string; role: string }) =>
+    axiosInstance.post(`/organizations/${orgId}/members`, data),
+  updateMemberRole: (orgId: string, memberId: string, role: string) =>
+    axiosInstance.patch(`/organizations/${orgId}/members/${memberId}`, { role }),
+  removeMember: (orgId: string, memberId: string) =>
+    axiosInstance.delete(`/organizations/${orgId}/members/${memberId}`),
 }
 
 export const assetApi = {
@@ -179,13 +185,45 @@ export const soaApi = {
 }
 
 export const incidentApi = {
-  list: (params: { organizationId: string; page?: number; limit?: number; status?: string }) =>
+  list: (params: { organizationId: string; page?: number; limit?: number; status?: string; severity?: string; search?: string; team?: string; origin?: string }) =>
     axiosInstance.get('/incidents', { params }),
-  get: (id: string) => axiosInstance.get(`/incidents/${id}`),
-  create: (data: any) => axiosInstance.post('/incidents', data),
-  update: (id: string, data: any) => axiosInstance.patch(`/incidents/${id}`, data),
-  delete: (id: string) => axiosInstance.delete(`/incidents/${id}`),
   stats: (organizationId: string) => axiosInstance.get('/incidents/stats', { params: { organizationId } }),
+}
+
+export const incidentKnowledgeApi = {
+  sync: (organizationId: string, mode: string = 'incremental') =>
+    axiosInstance.post('/incident-knowledge/sync', { organizationId, mode }),
+  syncStatus: (jobId: string) =>
+    axiosInstance.get(`/incident-knowledge/sync/${jobId}`),
+  status: (organizationId: string) =>
+    axiosInstance.get('/incident-knowledge/status', { params: { organizationId } }),
+  search: (organizationId: string, q: string, limit?: number) =>
+    axiosInstance.get('/incident-knowledge/search', { params: { organizationId, q, limit } }),
+  similar: (organizationId: string, itopId: string, limit?: number) =>
+    axiosInstance.get(`/incident-knowledge/similar/${itopId}`, { params: { organizationId, limit } }),
+  ask: (organizationId: string, question: string) =>
+    axiosInstance.post('/incident-knowledge/ask', { organizationId, question }),
+}
+
+export const changeApi = {
+  list: (params: { organizationId: string; page?: number; limit?: number; status?: string; search?: string; team?: string; changeType?: string }) =>
+    axiosInstance.get('/changes', { params }),
+  stats: (organizationId: string) => axiosInstance.get('/changes/stats', { params: { organizationId } }),
+}
+
+export const changeKnowledgeApi = {
+  sync: (organizationId: string, mode: string = 'incremental') =>
+    axiosInstance.post('/change-knowledge/sync', { organizationId, mode }),
+  syncStatus: (jobId: string) =>
+    axiosInstance.get(`/change-knowledge/sync/${jobId}`),
+  status: (organizationId: string) =>
+    axiosInstance.get('/change-knowledge/status', { params: { organizationId } }),
+  search: (organizationId: string, q: string, limit?: number) =>
+    axiosInstance.get('/change-knowledge/search', { params: { organizationId, q, limit } }),
+  similar: (organizationId: string, itopId: string, limit?: number) =>
+    axiosInstance.get(`/change-knowledge/similar/${itopId}`, { params: { organizationId, limit } }),
+  ask: (organizationId: string, question: string) =>
+    axiosInstance.post('/change-knowledge/ask', { organizationId, question }),
 }
 
 export const auditApi = {
@@ -478,25 +516,75 @@ export const api = {
     },
   },
   incidents: {
-    list: async (organizationId: string, params?: { search?: string; status?: string; severity?: string }) => {
+    list: async (organizationId: string, params?: { search?: string; status?: string; severity?: string; team?: string; origin?: string; page?: number; limit?: number }) => {
       const response = await incidentApi.list({ organizationId, ...params })
+      return response.data
+    },
+    stats: async (organizationId: string) => {
+      const response = await incidentApi.stats(organizationId)
+      return response.data?.data
+    },
+  },
+  incidentKnowledge: {
+    sync: async (organizationId: string, mode?: string) => {
+      const response = await incidentKnowledgeApi.sync(organizationId, mode)
+      return response.data?.data
+    },
+    syncStatus: async (jobId: string) => {
+      const response = await incidentKnowledgeApi.syncStatus(jobId)
+      return response.data?.data
+    },
+    status: async (organizationId: string) => {
+      const response = await incidentKnowledgeApi.status(organizationId)
+      return response.data?.data
+    },
+    search: async (organizationId: string, q: string, limit?: number) => {
+      const response = await incidentKnowledgeApi.search(organizationId, q, limit)
       return response.data?.data || []
     },
-    get: async (id: string) => {
-      const response = await incidentApi.get(id)
+    similar: async (organizationId: string, itopId: string, limit?: number) => {
+      const response = await incidentKnowledgeApi.similar(organizationId, itopId, limit)
+      return response.data?.data || []
+    },
+    ask: async (organizationId: string, question: string) => {
+      const response = await incidentKnowledgeApi.ask(organizationId, question)
       return response.data?.data
     },
-    create: async (organizationId: string, data: any) => {
-      const response = await incidentApi.create({ ...data, organizationId })
-      return response.data?.data
-    },
-    update: async (id: string, data: any) => {
-      const response = await incidentApi.update(id, data)
-      return response.data?.data
-    },
-    delete: async (id: string) => {
-      const response = await incidentApi.delete(id)
+  },
+  changes: {
+    list: async (organizationId: string, params?: { search?: string; status?: string; team?: string; changeType?: string; page?: number; limit?: number }) => {
+      const response = await changeApi.list({ organizationId, ...params })
       return response.data
+    },
+    stats: async (organizationId: string) => {
+      const response = await changeApi.stats(organizationId)
+      return response.data?.data
+    },
+  },
+  changeKnowledge: {
+    sync: async (organizationId: string, mode?: string) => {
+      const response = await changeKnowledgeApi.sync(organizationId, mode)
+      return response.data?.data
+    },
+    syncStatus: async (jobId: string) => {
+      const response = await changeKnowledgeApi.syncStatus(jobId)
+      return response.data?.data
+    },
+    status: async (organizationId: string) => {
+      const response = await changeKnowledgeApi.status(organizationId)
+      return response.data?.data
+    },
+    search: async (organizationId: string, q: string, limit?: number) => {
+      const response = await changeKnowledgeApi.search(organizationId, q, limit)
+      return response.data?.data || []
+    },
+    similar: async (organizationId: string, itopId: string, limit?: number) => {
+      const response = await changeKnowledgeApi.similar(organizationId, itopId, limit)
+      return response.data?.data || []
+    },
+    ask: async (organizationId: string, question: string) => {
+      const response = await changeKnowledgeApi.ask(organizationId, question)
+      return response.data?.data
     },
   },
   audit: {

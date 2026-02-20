@@ -151,9 +151,11 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
   router.get(
     '/google',
     passport.authenticate('google', {
-      scope: ['profile', 'email'],
+      scope: ['profile', 'email', 'https://www.googleapis.com/auth/drive.readonly'],
+      accessType: 'offline',
+      prompt: 'consent',
       session: false,
-    })
+    } as any)
   );
 
   router.get(

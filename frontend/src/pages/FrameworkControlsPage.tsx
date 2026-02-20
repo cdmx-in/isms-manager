@@ -66,9 +66,8 @@ const FRAMEWORK_INFO: Record<string, { shortName: string; name: string; icon: st
 }
 
 const implementationStatuses = [
-  { value: 'IMPLEMENTED', label: 'Implemented', icon: CheckCircle2, color: 'text-green-500' },
-  { value: 'PARTIAL', label: 'Partially Implemented', icon: Clock, color: 'text-yellow-500' },
-  { value: 'PLANNED', label: 'Planned', icon: AlertCircle, color: 'text-blue-500' },
+  { value: 'FULLY_IMPLEMENTED', label: 'Fully Implemented', icon: CheckCircle2, color: 'text-green-500' },
+  { value: 'PARTIALLY_IMPLEMENTED', label: 'Partially Implemented', icon: Clock, color: 'text-yellow-500' },
   { value: 'NOT_IMPLEMENTED', label: 'Not Implemented', icon: XCircle, color: 'text-red-500' },
   { value: 'NOT_APPLICABLE', label: 'Not Applicable', icon: XCircle, color: 'text-gray-500' },
 ]
@@ -143,7 +142,7 @@ export function FrameworkControlsPage() {
   }
 
   const getStatusInfo = (status: string) => {
-    return implementationStatuses.find((s) => s.value === status) || implementationStatuses[3]
+    return implementationStatuses.find((s) => s.value === status) || implementationStatuses[2]
   }
 
   // Derive unique categories from controls

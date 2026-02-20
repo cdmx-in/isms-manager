@@ -13,6 +13,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Layers,
+  Users,
+  GitBranch,
 } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -25,7 +27,9 @@ const navItems = [
   { name: 'Policies', href: '/policies', icon: FileText },
   { name: 'Statement of Applicability', href: '/soa', icon: ClipboardCheck },
   { name: 'Incidents', href: '/incidents', icon: AlertCircle },
+  { name: 'Changes', href: '/changes', icon: GitBranch },
   { name: 'Audit Log', href: '/audit-log', icon: History },
+  { name: 'Users', href: '/users', icon: Users },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]
 

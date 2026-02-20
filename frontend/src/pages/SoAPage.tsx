@@ -44,7 +44,6 @@ import { useToast } from '@/components/ui/use-toast'
 import { formatDate } from '@/lib/utils'
 import {
   Search,
-  Filter,
   CheckCircle2,
   XCircle,
   Clock,
@@ -111,8 +110,8 @@ export function SoAPage() {
 
   // State
   const [activeTab, setActiveTab] = useState('soa')
+  const [activeCategory, setActiveCategory] = useState('A5_ORGANIZATIONAL')
   const [search, setSearch] = useState('')
-  const [categoryFilter, setCategoryFilter] = useState<string>('')
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [approvalFilter, setApprovalFilter] = useState<string>('')
   const [selectedEntry, setSelectedEntry] = useState<any>(null)
@@ -139,11 +138,10 @@ export function SoAPage() {
   // ============================================
 
   const { data: soaResponse, isLoading } = useQuery({
-    queryKey: ['soa', currentOrganizationId, search, categoryFilter, statusFilter, approvalFilter],
+    queryKey: ['soa', currentOrganizationId, search, statusFilter, approvalFilter],
     queryFn: () =>
       api.soa.list(currentOrganizationId!, {
         search: search || undefined,
-        category: categoryFilter || undefined,
         status: statusFilter || undefined,
         approvalStatus: approvalFilter || undefined,
       }),
@@ -441,20 +439,6 @@ export function SoAPage() {
                     className="pl-10"
                   />
                 </div>
-                <Select value={categoryFilter || 'all'} onValueChange={(v) => setCategoryFilter(v === 'all' ? '' : v)}>
-                  <SelectTrigger className="w-[200px]">
-                    <Filter className="mr-2 h-4 w-4" />
-                    <SelectValue placeholder="All Categories" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    {CATEGORIES.map((cat) => (
-                      <SelectItem key={cat.id} value={cat.id}>
-                        {cat.prefix} - {cat.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
                 <Select value={statusFilter || 'all'} onValueChange={(v) => setStatusFilter(v === 'all' ? '' : v)}>
                   <SelectTrigger className="w-[180px]">
                     <SelectValue placeholder="All Statuses" />
@@ -481,167 +465,177 @@ export function SoAPage() {
             </CardContent>
           </Card>
 
-          {/* SoA Table with frozen columns */}
-          {CATEGORIES.map((category) => {
-            const entries = groupedEntries[category.id]
-            if (!entries || entries.length === 0) return null
+          {/* Category Tabs */}
+          <Tabs value={activeCategory} onValueChange={setActiveCategory}>
+            <TabsList>
+              {CATEGORIES.map((category) => {
+                const entries = groupedEntries[category.id] || []
+                const catImplemented = entries.filter((e: any) => e.isApplicable && e.status === 'IMPLEMENTED').length
+                const catTotal = entries.length
 
-            const catApplicable = entries.filter((e: any) => e.isApplicable).length
-            const catImplemented = entries.filter((e: any) => e.isApplicable && e.status === 'IMPLEMENTED').length
+                return (
+                  <TabsTrigger key={category.id} value={category.id}>
+                    {category.prefix} - {category.name}
+                    <Badge variant="secondary" className="ml-2 text-xs font-mono px-1.5 py-0">
+                      {catImplemented}/{catTotal}
+                    </Badge>
+                  </TabsTrigger>
+                )
+              })}
+            </TabsList>
 
-            return (
-              <Card key={category.id}>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg">
-                      {category.prefix} - {category.name}
-                    </CardTitle>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                      <span>{entries.length} controls</span>
-                      <span>{catApplicable} applicable</span>
-                      <span>{catImplemented} implemented</span>
+            {CATEGORIES.map((category) => {
+              const entries = groupedEntries[category.id] || []
+
+              return (
+                <TabsContent key={category.id} value={category.id} className="mt-4">
+                  {entries.length === 0 ? (
+                    <Card className="py-12">
+                      <div className="text-center text-muted-foreground">
+                        <Shield className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                        <p>No controls found matching your filters</p>
+                      </div>
+                    </Card>
+                  ) : (
+                    <div className="overflow-x-auto relative border rounded-lg">
+                      <div className="overflow-auto">
+                            <table className="w-full text-sm border-collapse" style={{ minWidth: '1600px' }}>
+                              <thead>
+                                <tr className="border-b bg-muted/50">
+                                  <th className="sticky top-0 left-0 z-30 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[90px] border-r">
+                                    Control No
+                                  </th>
+                                  <th className="sticky top-0 left-[90px] z-30 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[200px] border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                    Control Name
+                                  </th>
+                                  <th className="sticky top-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[250px]">Control</th>
+                                  <th className="sticky top-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[100px]">Source</th>
+                                  <th className="sticky top-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[100px]">Applicable</th>
+                                  <th className="sticky top-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[120px]">Status</th>
+                                  <th className="sticky top-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[140px]">Control Owner</th>
+                                  <th className="sticky top-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[200px]">Justification</th>
+                                  <th className="sticky top-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[180px]">Documentation Ref</th>
+                                  <th className="sticky top-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[150px]">Comments</th>
+                                  <th className="sticky top-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[80px]">Version</th>
+                                  <th className="sticky top-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[140px]">Approval</th>
+                                  <th className="sticky top-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-right font-medium w-[60px]">Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {entries.map((entry: any) => {
+                                  const statusOpt = getStatusOption(entry.status)
+                                  const approval = getApprovalConfig(entry.approvalStatus)
+
+                                  return (
+                                    <tr key={entry.id} className="border-b hover:bg-muted/30 transition-colors">
+                                      <td className="sticky left-0 z-10 bg-background px-3 py-2.5 font-mono text-xs font-semibold border-r">
+                                        {entry.control?.controlId}
+                                      </td>
+                                      <td className="sticky left-[90px] z-10 bg-background px-3 py-2.5 border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                        <span className="font-medium text-sm line-clamp-2">{entry.control?.name}</span>
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        <span className="text-xs text-muted-foreground line-clamp-3">
+                                          {entry.control?.description || '-'}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-2.5 text-xs">{entry.controlSource || 'Annex A'}</td>
+                                      <td className="px-3 py-2.5">
+                                        {entry.isApplicable ? (
+                                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">Yes</Badge>
+                                        ) : (
+                                          <Badge variant="outline" className="bg-gray-50 text-gray-500 border-gray-200">No</Badge>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        <Badge className={cn('text-xs', statusOpt.color)}>
+                                          {statusOpt.label}
+                                        </Badge>
+                                      </td>
+                                      <td className="px-3 py-2.5 text-xs">{entry.controlOwner || '-'}</td>
+                                      <td className="px-3 py-2.5">
+                                        <span className="text-xs text-muted-foreground line-clamp-2">
+                                          {entry.justification || '-'}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        <span className="text-xs text-muted-foreground line-clamp-2">
+                                          {entry.documentationReferences || '-'}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        <span className="text-xs text-muted-foreground line-clamp-2">
+                                          {entry.comments || '-'}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        <span className="font-mono text-xs">{entry.version?.toFixed(1) || '0.1'}</span>
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        <Badge className={cn('text-xs', approval.color)}>
+                                          {approval.label}
+                                        </Badge>
+                                      </td>
+                                      <td className="px-3 py-2.5 text-right">
+                                        <DropdownMenu>
+                                          <DropdownMenuTrigger asChild>
+                                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                                              <MoreHorizontal className="h-4 w-4" />
+                                            </Button>
+                                          </DropdownMenuTrigger>
+                                          <DropdownMenuContent align="end">
+                                            <DropdownMenuItem onClick={() => handleEntryClick(entry)}>
+                                              <Pencil className="mr-2 h-4 w-4" />
+                                              Edit
+                                            </DropdownMenuItem>
+                                            <DropdownMenuSeparator />
+                                            {(entry.approvalStatus === 'DRAFT' || entry.approvalStatus === 'REJECTED') && (
+                                              <DropdownMenuItem onClick={() => handleSubmitForReview(entry)}>
+                                                <SendHorizontal className="mr-2 h-4 w-4" />
+                                                Submit for Review
+                                              </DropdownMenuItem>
+                                            )}
+                                            {entry.approvalStatus === 'PENDING_FIRST_APPROVAL' && canApproveFirst && (
+                                              <DropdownMenuItem onClick={() => handleApproval(entry)}>
+                                                <CheckCircle2 className="mr-2 h-4 w-4 text-green-600" />
+                                                1st Level Approve
+                                              </DropdownMenuItem>
+                                            )}
+                                            {entry.approvalStatus === 'PENDING_SECOND_APPROVAL' && canApproveSecond && (
+                                              <DropdownMenuItem onClick={() => handleApproval(entry)}>
+                                                <FileCheck className="mr-2 h-4 w-4 text-green-600" />
+                                                2nd Level Approve
+                                              </DropdownMenuItem>
+                                            )}
+                                            {['PENDING_FIRST_APPROVAL', 'PENDING_SECOND_APPROVAL'].includes(entry.approvalStatus) && canApprove && (
+                                              <DropdownMenuItem onClick={() => handleReject(entry)}>
+                                                <XCircle className="mr-2 h-4 w-4 text-red-600" />
+                                                Reject
+                                              </DropdownMenuItem>
+                                            )}
+                                            <DropdownMenuSeparator />
+                                            <DropdownMenuItem onClick={() => {
+                                              setSelectedEntry(entry)
+                                              setIsVersionHistoryOpen(true)
+                                            }}>
+                                              <History className="mr-2 h-4 w-4" />
+                                              Version History
+                                            </DropdownMenuItem>
+                                          </DropdownMenuContent>
+                                        </DropdownMenu>
+                                      </td>
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                      </div>
                     </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div className="overflow-x-auto relative">
-                    <div className="max-h-[500px] overflow-auto">
-                      <table className="w-full text-sm border-collapse" style={{ minWidth: '1600px' }}>
-                        <thead>
-                          <tr className="border-b bg-muted/50">
-                            <th className="sticky left-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[90px] border-r">
-                              Control No
-                            </th>
-                            <th className="sticky left-[90px] z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[200px] border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                              Control Name
-                            </th>
-                            <th className="px-3 py-3 text-left font-medium w-[250px]">Control</th>
-                            <th className="px-3 py-3 text-left font-medium w-[100px]">Source</th>
-                            <th className="px-3 py-3 text-left font-medium w-[100px]">Applicable</th>
-                            <th className="px-3 py-3 text-left font-medium w-[120px]">Status</th>
-                            <th className="px-3 py-3 text-left font-medium w-[140px]">Control Owner</th>
-                            <th className="px-3 py-3 text-left font-medium w-[200px]">Justification</th>
-                            <th className="px-3 py-3 text-left font-medium w-[180px]">Documentation Ref</th>
-                            <th className="px-3 py-3 text-left font-medium w-[150px]">Comments</th>
-                            <th className="px-3 py-3 text-left font-medium w-[80px]">Version</th>
-                            <th className="px-3 py-3 text-left font-medium w-[140px]">Approval</th>
-                            <th className="px-3 py-3 text-right font-medium w-[60px]">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {entries.map((entry: any) => {
-                            const statusOpt = getStatusOption(entry.status)
-                            const approval = getApprovalConfig(entry.approvalStatus)
-
-                            return (
-                              <tr key={entry.id} className="border-b hover:bg-muted/30 transition-colors">
-                                <td className="sticky left-0 z-10 bg-background px-3 py-2.5 font-mono text-xs font-semibold border-r">
-                                  {entry.control?.controlId}
-                                </td>
-                                <td className="sticky left-[90px] z-10 bg-background px-3 py-2.5 border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                                  <span className="font-medium text-sm line-clamp-2">{entry.control?.name}</span>
-                                </td>
-                                <td className="px-3 py-2.5">
-                                  <span className="text-xs text-muted-foreground line-clamp-3">
-                                    {entry.control?.description || '-'}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-2.5 text-xs">{entry.controlSource || 'Annex A'}</td>
-                                <td className="px-3 py-2.5">
-                                  {entry.isApplicable ? (
-                                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">Yes</Badge>
-                                  ) : (
-                                    <Badge variant="outline" className="bg-gray-50 text-gray-500 border-gray-200">No</Badge>
-                                  )}
-                                </td>
-                                <td className="px-3 py-2.5">
-                                  <Badge className={cn('text-xs', statusOpt.color)}>
-                                    {statusOpt.label}
-                                  </Badge>
-                                </td>
-                                <td className="px-3 py-2.5 text-xs">{entry.controlOwner || '-'}</td>
-                                <td className="px-3 py-2.5">
-                                  <span className="text-xs text-muted-foreground line-clamp-2">
-                                    {entry.justification || '-'}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-2.5">
-                                  <span className="text-xs text-muted-foreground line-clamp-2">
-                                    {entry.documentationReferences || '-'}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-2.5">
-                                  <span className="text-xs text-muted-foreground line-clamp-2">
-                                    {entry.comments || '-'}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-2.5">
-                                  <span className="font-mono text-xs">{entry.version?.toFixed(1) || '0.1'}</span>
-                                </td>
-                                <td className="px-3 py-2.5">
-                                  <Badge className={cn('text-xs', approval.color)}>
-                                    {approval.label}
-                                  </Badge>
-                                </td>
-                                <td className="px-3 py-2.5 text-right">
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
-                                        <MoreHorizontal className="h-4 w-4" />
-                                      </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                      <DropdownMenuItem onClick={() => handleEntryClick(entry)}>
-                                        <Pencil className="mr-2 h-4 w-4" />
-                                        Edit
-                                      </DropdownMenuItem>
-                                      <DropdownMenuSeparator />
-                                      {(entry.approvalStatus === 'DRAFT' || entry.approvalStatus === 'REJECTED') && (
-                                        <DropdownMenuItem onClick={() => handleSubmitForReview(entry)}>
-                                          <SendHorizontal className="mr-2 h-4 w-4" />
-                                          Submit for Review
-                                        </DropdownMenuItem>
-                                      )}
-                                      {entry.approvalStatus === 'PENDING_FIRST_APPROVAL' && canApproveFirst && (
-                                        <DropdownMenuItem onClick={() => handleApproval(entry)}>
-                                          <CheckCircle2 className="mr-2 h-4 w-4 text-green-600" />
-                                          1st Level Approve
-                                        </DropdownMenuItem>
-                                      )}
-                                      {entry.approvalStatus === 'PENDING_SECOND_APPROVAL' && canApproveSecond && (
-                                        <DropdownMenuItem onClick={() => handleApproval(entry)}>
-                                          <FileCheck className="mr-2 h-4 w-4 text-green-600" />
-                                          2nd Level Approve
-                                        </DropdownMenuItem>
-                                      )}
-                                      {['PENDING_FIRST_APPROVAL', 'PENDING_SECOND_APPROVAL'].includes(entry.approvalStatus) && canApprove && (
-                                        <DropdownMenuItem onClick={() => handleReject(entry)}>
-                                          <XCircle className="mr-2 h-4 w-4 text-red-600" />
-                                          Reject
-                                        </DropdownMenuItem>
-                                      )}
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem onClick={() => {
-                                        setSelectedEntry(entry)
-                                        setIsVersionHistoryOpen(true)
-                                      }}>
-                                        <History className="mr-2 h-4 w-4" />
-                                        Version History
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                </td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )
-          })}
+                  )}
+                </TabsContent>
+              )
+            })}
+          </Tabs>
         </TabsContent>
 
         {/* ============================================ */}

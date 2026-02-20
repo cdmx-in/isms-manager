@@ -163,7 +163,6 @@ router.get(
             assets: true,
             risks: true,
             controls: true,
-            policies: true,
             incidents: true,
           },
         },

@@ -116,8 +116,10 @@ model Organization {
   audits         Audit[]
   files          FileUpload[]
   soaEntries     SoAEntry[]
-  driveFolders   DriveFolder[]
-  driveDocuments DriveDocument[]
+  driveFolders          DriveFolder[]
+  driveDocuments        DriveDocument[]
+  incidentEmbeddings    IncidentEmbedding[]
+  changeEmbeddings      ChangeEmbedding[]
 
   @@index([slug])
 }
@@ -988,4 +990,68 @@ model AuditLog {
   @@index([organizationId])
   @@index([entityType, entityId])
   @@index([createdAt])
+}
+
+// ============================================
+// INCIDENT KNOWLEDGE BASE (Vector Embeddings)
+// ============================================
+
+model IncidentEmbedding {
+  id             String   @id @default(uuid())
+  itopId         String
+  chunkIndex     Int      @default(0)
+  ref            String
+  title          String
+  content        String   @db.Text
+  embedding      Unsupported("vector(1536)")?
+  metadata       Json
+  itopLastUpdate DateTime
+  organizationId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([itopId, chunkIndex])
+  @@index([organizationId])
+  @@index([itopId])
+}
+
+// ============================================
+// CHANGE KNOWLEDGE BASE (Vector Embeddings)
+// ============================================
+
+model ChangeEmbedding {
+  id             String   @id @default(uuid())
+  itopId         String
+  chunkIndex     Int      @default(0)
+  ref            String
+  title          String
+  content        String   @db.Text
+  embedding      Unsupported("vector(1536)")?
+  metadata       Json
+  itopLastUpdate DateTime
+  organizationId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([itopId, chunkIndex])
+  @@index([organizationId])
+  @@index([itopId])
+}
+
+model SyncJob {
+  id             String    @id @default(uuid())
+  type           String
+  status         String    @default("running")
+  progress       Int       @default(0)
+  total          Int       @default(0)
+  error          String?   @db.Text
+  organizationId String
+  startedAt      DateTime  @default(now())
+  completedAt    DateTime?
+
+  @@index([organizationId, type])
 }

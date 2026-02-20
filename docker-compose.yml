@@ -69,6 +69,7 @@ services:
     container_name: isms-backend
     environment:
       NODE_ENV: development
+      CHOKIDAR_USEPOLLING: "true"
       DATABASE_URL: postgresql://${POSTGRES_USER:-isms_user}:${POSTGRES_PASSWORD:-isms_secure_password}@postgres:5432/${POSTGRES_DB:-isms_db}?schema=public
       REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_password}@redis:6379
       MINIO_ENDPOINT: minio

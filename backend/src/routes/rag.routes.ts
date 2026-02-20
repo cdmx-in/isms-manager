@@ -8,6 +8,57 @@ import {
   answerQuestion,
   getIndexingStatus,
 } from '../services/rag.service.js';
+import { prisma } from '../index.js';
+import { google } from 'googleapis';
+import { logger } from '../utils/logger.js';
+
+// Helper to get a fresh Google access token for the user
+async function getUserDriveToken(userId: string): Promise<string | undefined> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      googleDriveAccessToken: true,
+      googleDriveRefreshToken: true,
+      googleDriveTokenExpiry: true,
+    },
+  });
+
+  if (!user?.googleDriveAccessToken) return undefined;
+
+  // If token is still valid (with 5 min buffer), use it directly
+  if (user.googleDriveTokenExpiry && user.googleDriveTokenExpiry > new Date(Date.now() + 5 * 60 * 1000)) {
+    return user.googleDriveAccessToken;
+  }
+
+  // Token expired - try refreshing
+  if (user.googleDriveRefreshToken) {
+    try {
+      const oauth2 = new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET,
+      );
+      oauth2.setCredentials({ refresh_token: user.googleDriveRefreshToken });
+      const { credentials } = await oauth2.refreshAccessToken();
+
+      if (credentials.access_token) {
+        await prisma.user.update({
+          where: { id: userId },
+          data: {
+            googleDriveAccessToken: credentials.access_token,
+            googleDriveTokenExpiry: credentials.expiry_date
+              ? new Date(credentials.expiry_date)
+              : new Date(Date.now() + 3600 * 1000),
+          },
+        });
+        return credentials.access_token;
+      }
+    } catch (err: any) {
+      logger.warn(`Failed to refresh Drive token for user ${userId}: ${err.message}`);
+    }
+  }
+
+  return user.googleDriveAccessToken; // return stale token as last resort
+}
 
 const router = Router();
 
@@ -33,7 +84,8 @@ router.post(
       throw new AppError('OpenAI API key is not configured', 503);
     }
 
-    const result = await indexDocument(documentId);
+    const userToken = await getUserDriveToken(authReq.user.id);
+    const result = await indexDocument(documentId, userToken);
 
     res.json({
       success: true,
@@ -67,7 +119,8 @@ router.post(
       throw new AppError('OpenAI API key is not configured', 503);
     }
 
-    const result = await indexAllDocuments(organizationId);
+    const userToken = await getUserDriveToken(authReq.user.id);
+    const result = await indexAllDocuments(organizationId, userToken);
 
     res.json({
       success: true,

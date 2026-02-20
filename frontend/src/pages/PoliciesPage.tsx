@@ -34,6 +34,7 @@ import {
   HardDrive,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import ReactMarkdown from 'react-markdown'
 
 const formatFileSize = (bytes?: number | null) => {
   if (!bytes) return '-'
@@ -216,6 +217,19 @@ export function PoliciesPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          {ragStatus && ragStatus.pendingDocuments > 0 && (
+            <Button
+              onClick={() => indexAllMutation.mutate()}
+              disabled={indexAllMutation.isPending}
+            >
+              {indexAllMutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Brain className="mr-2 h-4 w-4" />
+              )}
+              Index {ragStatus.pendingDocuments} Documents
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={() => syncMutation.mutate()}
@@ -251,6 +265,30 @@ export function PoliciesPage() {
         {/* TAB 1: Synced Documents (from DB)                */}
         {/* ================================================ */}
         <TabsContent value="documents" className="space-y-4">
+          {/* Indexing banner */}
+          {ragStatus && ragStatus.pendingDocuments > 0 && documents?.length > 0 && (
+            <div className="flex items-center gap-3 p-3 bg-purple-50 dark:bg-purple-950/20 rounded-lg border border-purple-200 dark:border-purple-800">
+              <Brain className="h-5 w-5 text-purple-600 flex-shrink-0" />
+              <p className="text-sm flex-1">
+                <strong>{ragStatus.pendingDocuments}</strong> of {ragStatus.totalDocuments} documents are not yet indexed for AI search.
+                {ragStatus.indexedDocuments > 0 && ` (${ragStatus.indexedDocuments} already indexed)`}
+              </p>
+              <Button
+                size="sm"
+                onClick={() => indexAllMutation.mutate()}
+                disabled={indexAllMutation.isPending}
+                className="bg-purple-600 hover:bg-purple-700"
+              >
+                {indexAllMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Brain className="mr-2 h-4 w-4" />
+                )}
+                Index All
+              </Button>
+            </div>
+          )}
+
           {/* Folder filter cards */}
           {folders.length > 0 && (
             <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
@@ -712,7 +750,7 @@ export function PoliciesPage() {
                     <div className="flex items-start gap-3">
                       <Brain className="h-5 w-5 text-primary mt-0.5 flex-shrink-0" />
                       <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <p className="whitespace-pre-wrap">{ragAnswer.answer}</p>
+                        <ReactMarkdown>{ragAnswer.answer}</ReactMarkdown>
                       </div>
                     </div>
                   </div>

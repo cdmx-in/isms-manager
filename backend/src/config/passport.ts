@@ -151,15 +151,24 @@ export const configurePassport = (passport: PassportStatic) => {
         clientID: process.env.GOOGLE_CLIENT_ID,
         clientSecret: process.env.GOOGLE_CLIENT_SECRET,
         callbackURL: process.env.GOOGLE_CALLBACK_URL || '/api/auth/google/callback',
-        scope: ['profile', 'email'],
+        scope: ['profile', 'email', 'https://www.googleapis.com/auth/drive.readonly'],
+        accessType: 'offline',
+        prompt: 'consent',
         tokenURL: 'https://oauth2.googleapis.com/token',
-      },
+      } as any,
       async (accessToken, refreshToken, profile: Profile, done) => {
         try {
           const email = profile.emails?.[0]?.value;
           if (!email) {
             return done(null, false, { message: 'No email provided by Google' });
           }
+
+          // Google Drive token data
+          const driveTokenData = {
+            googleDriveAccessToken: accessToken || null,
+            googleDriveRefreshToken: refreshToken || null,
+            googleDriveTokenExpiry: new Date(Date.now() + 3600 * 1000), // ~1 hour
+          };
 
           // Find or create user
           let user = await prisma.user.findUnique({
@@ -174,32 +183,28 @@ export const configurePassport = (passport: PassportStatic) => {
           });
 
           if (user) {
-            // Update existing user with Google info if needed
+            // Update existing user with Google info and Drive tokens
+            const updateData: any = {
+              lastLoginAt: new Date(),
+              ...driveTokenData,
+            };
             if (user.authProvider !== 'GOOGLE') {
-              user = await prisma.user.update({
-                where: { id: user.id },
-                data: {
-                  authProvider: 'GOOGLE',
-                  authProviderId: profile.id,
-                  isEmailVerified: true,
-                  lastLoginAt: new Date(),
-                  avatar: profile.photos?.[0]?.value || user.avatar,
-                },
-                include: {
-                  organizationMemberships: {
-                    include: {
-                      organization: true,
-                    },
+              updateData.authProvider = 'GOOGLE';
+              updateData.authProviderId = profile.id;
+              updateData.isEmailVerified = true;
+              updateData.avatar = profile.photos?.[0]?.value || user.avatar;
+            }
+            user = await prisma.user.update({
+              where: { id: user.id },
+              data: updateData,
+              include: {
+                organizationMemberships: {
+                  include: {
+                    organization: true,
                   },
                 },
-              });
-            } else {
-              // Update last login
-              await prisma.user.update({
-                where: { id: user.id },
-                data: { lastLoginAt: new Date() },
-              });
-            }
+              },
+            });
           } else {
             // Create new user
             user = await prisma.user.create({
@@ -212,6 +217,7 @@ export const configurePassport = (passport: PassportStatic) => {
                 isEmailVerified: true,
                 avatar: profile.photos?.[0]?.value,
                 lastLoginAt: new Date(),
+                ...driveTokenData,
               },
               include: {
                 organizationMemberships: {
