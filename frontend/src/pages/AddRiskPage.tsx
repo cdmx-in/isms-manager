@@ -46,9 +46,14 @@ import {
   ChevronsUpDown,
   Check,
   X,
+  Sparkles,
+  Bot,
+  CheckCircle2,
+  Copy,
+  ShieldAlert,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import axiosInstance from '@/lib/api'
+import axiosInstance, { api } from '@/lib/api'
 
 const PROBABILITY_LABELS = [
   { value: 1, label: 'Rare', description: 'May occur only in exceptional circumstances', color: 'bg-green-100 text-green-800 border-green-200' },
@@ -89,6 +94,8 @@ export function AddRiskPage() {
   })
   const [selectedControls, setSelectedControls] = useState<string[]>([])
   const [controlSearchOpen, setControlSearchOpen] = useState(false)
+  const [aiSuggestions, setAiSuggestions] = useState<any>(null)
+  const [aiSuggestLoading, setAiSuggestLoading] = useState(false)
 
   // Fetch ISO 27001 controls for the multi-select
   const { data: controlsData } = useQuery({
@@ -129,6 +136,44 @@ export function AddRiskPage() {
       controlsReference,
       category: 'OPERATIONAL',
     })
+  }
+
+  const handleAiSuggest = async () => {
+    if (!currentOrganizationId || !formData.title || !formData.description) return
+    setAiSuggestLoading(true)
+    setAiSuggestions(null)
+    try {
+      const result = await api.risks.aiSuggest({
+        title: formData.title,
+        description: formData.description,
+        organizationId: currentOrganizationId,
+      })
+      setAiSuggestions(result.suggestions)
+    } catch (err: any) {
+      toast({
+        title: 'AI Suggestion failed',
+        description: err?.response?.data?.message || 'Failed to get AI suggestions',
+        variant: 'destructive',
+      })
+    } finally {
+      setAiSuggestLoading(false)
+    }
+  }
+
+  const applyAiSuggestions = () => {
+    if (!aiSuggestions) return
+    setFormData(prev => ({
+      ...prev,
+      inherentProbability: aiSuggestions.suggestedLikelihood || prev.inherentProbability,
+      inherentImpact: aiSuggestions.suggestedImpact || prev.inherentImpact,
+    }))
+    if (aiSuggestions.suggestedControls?.length) {
+      setSelectedControls(prev => {
+        const merged = new Set([...prev, ...aiSuggestions.suggestedControls])
+        return Array.from(merged)
+      })
+    }
+    toast({ title: 'AI suggestions applied', description: 'Scoring and controls updated. Review before saving.' })
   }
 
   const score = formData.inherentProbability * formData.inherentImpact
@@ -204,6 +249,26 @@ export function AddRiskPage() {
               Include threat source, affected assets, exploited vulnerability, and potential business consequences. Reference the risk scenario's context within your ISMS scope.
             </p>
           </div>
+
+          {/* AI Suggest Button */}
+          {formData.title.length > 3 && formData.description.length > 10 && (
+            <div className="pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleAiSuggest}
+                disabled={aiSuggestLoading}
+                className="gap-2 border-violet-200 text-violet-700 hover:bg-violet-50 hover:text-violet-800 hover:border-violet-300 transition-all"
+              >
+                {aiSuggestLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+                {aiSuggestLoading ? 'Analyzing risk...' : 'AI Suggest — Auto-fill scoring & controls'}
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -483,6 +548,175 @@ export function AddRiskPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* AI Suggestions Panel */}
+      {(aiSuggestLoading || aiSuggestions) && (
+        <Card className="overflow-hidden border-violet-200 shadow-lg shadow-violet-100/50">
+          <div className="bg-gradient-to-r from-violet-600 to-purple-600 px-5 py-3 flex items-center gap-2.5">
+            <Bot className="h-4 w-4 text-white" />
+            <h2 className="text-sm font-semibold text-white">AI Suggestions</h2>
+            <span className="text-violet-200 text-xs ml-auto">Powered by GPT-4o</span>
+          </div>
+          <CardContent className="p-5">
+            {aiSuggestLoading ? (
+              <div className="flex flex-col items-center justify-center py-8 gap-3">
+                <div className="relative">
+                  <Loader2 className="h-8 w-8 animate-spin text-violet-500" />
+                  <Sparkles className="h-4 w-4 text-violet-400 absolute -top-1 -right-1 animate-pulse" />
+                </div>
+                <p className="text-sm text-muted-foreground">Analyzing risk and generating suggestions...</p>
+              </div>
+            ) : aiSuggestions?.error ? (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">
+                {aiSuggestions.error}
+              </div>
+            ) : aiSuggestions ? (
+              <div className="space-y-4">
+                {/* Suggested Scoring */}
+                <div className="space-y-2">
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <Gauge className="h-3.5 w-3.5" />
+                    Suggested Risk Scoring
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-gradient-to-br from-violet-50 to-purple-50/30 rounded-lg border border-violet-100 p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium text-violet-700">Probability</span>
+                        <Badge className={cn('text-xs', PROBABILITY_LABELS[(aiSuggestions.suggestedLikelihood || 3) - 1]?.color)}>
+                          {aiSuggestions.suggestedLikelihood} — {PROBABILITY_LABELS[(aiSuggestions.suggestedLikelihood || 3) - 1]?.label}
+                        </Badge>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">{aiSuggestions.likelihoodRationale}</p>
+                    </div>
+                    <div className="bg-gradient-to-br from-violet-50 to-purple-50/30 rounded-lg border border-violet-100 p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium text-violet-700">Impact</span>
+                        <Badge className={cn('text-xs', IMPACT_LABELS[(aiSuggestions.suggestedImpact || 3) - 1]?.color)}>
+                          {aiSuggestions.suggestedImpact} — {IMPACT_LABELS[(aiSuggestions.suggestedImpact || 3) - 1]?.label}
+                        </Badge>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">{aiSuggestions.impactRationale}</p>
+                    </div>
+                  </div>
+                  {(() => {
+                    const suggestedScore = (aiSuggestions.suggestedLikelihood || 3) * (aiSuggestions.suggestedImpact || 3)
+                    const suggestedLevel = getRiskLevel(suggestedScore)
+                    return (
+                      <div className={cn('rounded-lg border p-2.5 flex items-center justify-between', suggestedLevel.bgLight)}>
+                        <span className="text-xs text-muted-foreground">Suggested inherent risk score</span>
+                        <div className="flex items-center gap-2">
+                          <span className={cn('text-lg font-bold tabular-nums', {
+                            'text-green-700': suggestedScore < 6, 'text-yellow-700': suggestedScore >= 6 && suggestedScore < 15,
+                            'text-orange-700': suggestedScore >= 15 && suggestedScore < 20, 'text-red-700': suggestedScore >= 20,
+                          })}>{suggestedScore}</span>
+                          <Badge className={cn('text-xs', suggestedLevel.color)}>{suggestedLevel.label}</Badge>
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
+
+                {/* CIA Triad */}
+                <div className="space-y-2">
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <ShieldAlert className="h-3.5 w-3.5" />
+                    CIA Impact Assessment
+                  </h3>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { label: 'Confidentiality', affected: aiSuggestions.affectsConfidentiality, icon: '🔒' },
+                      { label: 'Integrity', affected: aiSuggestions.affectsIntegrity, icon: '✓' },
+                      { label: 'Availability', affected: aiSuggestions.affectsAvailability, icon: '⚡' },
+                    ].map(item => (
+                      <div key={item.label} className={cn(
+                        'rounded-lg border p-2.5 text-center transition-all',
+                        item.affected
+                          ? 'bg-red-50 border-red-200 text-red-700'
+                          : 'bg-gray-50 border-gray-200 text-gray-400'
+                      )}>
+                        <div className="text-lg mb-0.5">{item.icon}</div>
+                        <div className="text-[11px] font-medium">{item.label}</div>
+                        <div className="text-[10px]">{item.affected ? 'Affected' : 'Not affected'}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {aiSuggestions.ciaRationale && (
+                    <p className="text-[11px] text-muted-foreground bg-gray-50 rounded p-2">{aiSuggestions.ciaRationale}</p>
+                  )}
+                </div>
+
+                {/* Suggested Controls */}
+                {aiSuggestions.suggestedControls?.length > 0 && (
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      Suggested Controls
+                    </h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {aiSuggestions.suggestedControls.map((cid: string) => {
+                        const ctrl = controls.find((c: any) => c.controlId === cid)
+                        return (
+                          <Badge key={cid} variant="outline" className="text-xs gap-1 bg-violet-50 border-violet-200 text-violet-700">
+                            <CheckCircle2 className="h-3 w-3" />
+                            {cid}{ctrl ? ` — ${ctrl.name}` : ''}
+                          </Badge>
+                        )
+                      })}
+                    </div>
+                    {aiSuggestions.controlsRationale && (
+                      <p className="text-[11px] text-muted-foreground bg-gray-50 rounded p-2">{aiSuggestions.controlsRationale}</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Duplicate Warnings */}
+                {aiSuggestions.potentialDuplicates?.length > 0 && (
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <Copy className="h-3.5 w-3.5" />
+                      Potential Duplicates
+                    </h3>
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <div className="flex flex-wrap gap-1.5 mb-1.5">
+                        {aiSuggestions.potentialDuplicates.map((rid: string) => (
+                          <Badge key={rid} variant="outline" className="text-xs bg-amber-100 border-amber-300 text-amber-800">
+                            {rid}
+                          </Badge>
+                        ))}
+                      </div>
+                      {aiSuggestions.duplicateNotes && (
+                        <p className="text-[11px] text-amber-700">{aiSuggestions.duplicateNotes}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Additional Notes */}
+                {aiSuggestions.additionalNotes && (
+                  <div className="bg-violet-50/50 border border-violet-100 rounded-lg p-3">
+                    <p className="text-xs text-violet-800">{aiSuggestions.additionalNotes}</p>
+                  </div>
+                )}
+
+                {/* Apply Button */}
+                <div className="flex items-center justify-between pt-2 border-t">
+                  <p className="text-[11px] text-muted-foreground">
+                    AI suggestions are advisory — review and adjust before saving.
+                  </p>
+                  <Button
+                    onClick={applyAiSuggestions}
+                    className="gap-1.5 bg-violet-600 hover:bg-violet-700 shadow-sm shadow-violet-600/20"
+                    size="sm"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Apply Suggestions
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Action Footer */}
       <div className="flex items-center justify-between pt-2">

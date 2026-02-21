@@ -115,6 +115,13 @@ export const riskApi = {
     axiosInstance.patch(`/risks/document/versions/${versionId}`, { changeDescription }),
   discardRevision: (organizationId: string) =>
     axiosInstance.post('/risks/document/discard-revision', { organizationId }),
+  // AI endpoints
+  aiReview: (id: string) =>
+    axiosInstance.post(`/risks/${id}/ai-review`),
+  aiAnalyzeRegister: (organizationId: string) =>
+    axiosInstance.post('/risks/ai-analyze-register', { organizationId }),
+  aiSuggest: (data: { title: string; description: string; organizationId: string }) =>
+    axiosInstance.post('/risks/ai-suggest', data),
 }
 
 export const controlApi = {
@@ -560,6 +567,18 @@ export const api = {
     delete: async (id: string) => {
       const response = await riskApi.delete(id)
       return response.data
+    },
+    aiReview: async (id: string) => {
+      const response = await riskApi.aiReview(id)
+      return response.data?.data
+    },
+    aiAnalyzeRegister: async (organizationId: string) => {
+      const response = await riskApi.aiAnalyzeRegister(organizationId)
+      return response.data?.data
+    },
+    aiSuggest: async (data: { title: string; description: string; organizationId: string }) => {
+      const response = await riskApi.aiSuggest(data)
+      return response.data?.data
     },
   },
   controls: {

@@ -6,6 +6,7 @@ import { validate } from '../middleware/validate.js';
 import { createRiskValidator, uuidParam, paginationQuery } from '../middleware/validators.js';
 import { createAuditLog } from '../services/audit.service.js';
 import { logger } from '../utils/logger.js';
+import OpenAI from 'openai';
 
 const router = Router();
 
@@ -976,6 +977,268 @@ router.get(
   })
 );
 
+// Get all treatments for an organization (must be before /:id)
+router.get(
+  '/treatments/all',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId } = req.query;
+
+    if (!organizationId) {
+      throw new AppError('organizationId is required', 400);
+    }
+
+    const membership = authReq.user.organizationMemberships.find(
+      m => m.organizationId === organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('You are not authorized to view these treatments', 403);
+    }
+
+    const treatments = await prisma.riskTreatment.findMany({
+      where: {
+        risk: { organizationId: organizationId as string },
+      },
+      include: {
+        risk: {
+          select: {
+            id: true,
+            riskId: true,
+            title: true,
+            description: true,
+            createdAt: true,
+            owner: {
+              select: { id: true, firstName: true, lastName: true, email: true },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({
+      success: true,
+      data: treatments,
+    });
+  })
+);
+
+// ============================================
+// AI ENDPOINTS (must be before /:id)
+// ============================================
+
+// AI: Analyze entire risk register
+router.post(
+  '/ai-analyze-register',
+  authenticate,
+  requirePermission('risks', 'view'),
+  asyncHandler(async (req, res) => {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new AppError('OpenAI API key is not configured. Please set OPENAI_API_KEY.', 503);
+    }
+
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId } = req.body;
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('Not authorized', 403);
+    }
+
+    const risks = await prisma.risk.findMany({
+      where: { organizationId },
+      include: {
+        controls: { include: { control: { select: { controlId: true, name: true, implementationStatus: true } } } },
+        treatments: { orderBy: { createdAt: 'desc' }, take: 1 },
+        owner: { select: { firstName: true, lastName: true } },
+      },
+      orderBy: { inherentRisk: 'desc' },
+    });
+
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { name: true, riskAcceptConfidentiality: true, riskAcceptIntegrity: true, riskAcceptAvailability: true },
+    });
+
+    const activeRisks = risks.filter((r: any) => r.status !== 'CLOSED');
+    const critical = activeRisks.filter((r: any) => r.inherentRisk && r.inherentRisk >= 20).length;
+    const high = activeRisks.filter((r: any) => r.inherentRisk && r.inherentRisk >= 15 && r.inherentRisk < 20).length;
+    const medium = activeRisks.filter((r: any) => r.inherentRisk && r.inherentRisk >= 6 && r.inherentRisk < 15).length;
+    const low = activeRisks.filter((r: any) => r.inherentRisk && r.inherentRisk < 6).length;
+
+    const treatmentDist = {
+      MITIGATE: activeRisks.filter((r: any) => r.treatment === 'MITIGATE').length,
+      ACCEPT: activeRisks.filter((r: any) => r.treatment === 'ACCEPT').length,
+      TRANSFER: activeRisks.filter((r: any) => r.treatment === 'TRANSFER').length,
+      AVOID: activeRisks.filter((r: any) => r.treatment === 'AVOID').length,
+      PENDING: activeRisks.filter((r: any) => r.treatment === 'PENDING').length,
+    };
+
+    const noControls = activeRisks.filter((r: any) => r.controls.length === 0 && !r.controlsReference).length;
+    const noOwner = activeRisks.filter((r: any) => !r.ownerId).length;
+
+    const riskDetails = activeRisks.slice(0, 40).map((r: any) => {
+      const ctrls = r.controls.map((rc: any) => rc.control.controlId).join(', ') || r.controlsReference || 'None';
+      return `${r.riskId}: ${r.title} | L:${r.likelihood} I:${r.impact} Score:${r.inherentRisk} | Residual:${r.residualRisk || 'N/A'} | Treatment:${r.treatment} | Controls:[${ctrls}] | Owner:${r.owner ? `${r.owner.firstName} ${r.owner.lastName}` : 'Unassigned'} | CIA:${r.affectsConfidentiality ? 'C' : ''}${r.affectsIntegrity ? 'I' : ''}${r.affectsAvailability ? 'A' : ''}`;
+    }).join('\n');
+
+    const contextMessage = `
+# Risk Register Analysis for: ${org?.name || 'Organization'}
+
+## Statistics
+- Total Risks: ${risks.length} (Active: ${activeRisks.length})
+- Distribution: Critical(>=20): ${critical}, High(15-19): ${high}, Medium(6-14): ${medium}, Low(<6): ${low}
+- Treatment: Mitigate: ${treatmentDist.MITIGATE}, Accept: ${treatmentDist.ACCEPT}, Transfer: ${treatmentDist.TRANSFER}, Avoid: ${treatmentDist.AVOID}, Pending: ${treatmentDist.PENDING}
+
+## Coverage Gaps
+- Risks without linked controls: ${noControls}
+- Risks without assigned owner: ${noOwner}
+- Risks pending treatment: ${treatmentDist.PENDING}
+
+## Organization Risk Acceptance Thresholds
+- Confidentiality: ${org?.riskAcceptConfidentiality}, Integrity: ${org?.riskAcceptIntegrity}, Availability: ${org?.riskAcceptAvailability}
+
+## Risk Details (Top ${Math.min(activeRisks.length, 40)} by inherent score)
+${riskDetails}
+`;
+
+    const openai = new OpenAI({ apiKey });
+    const chatModel = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
+
+    const completion = await openai.chat.completions.create({
+      model: chatModel,
+      messages: [
+        {
+          role: 'system',
+          content: `You are an ISO 27001:2022 risk management expert. Analyze this organization's complete risk register and provide a comprehensive review:
+
+1. **Executive Summary** - 2-3 sentence overview of the organization's risk posture
+2. **Risk Distribution Analysis** - Comment on the balance of risk levels, identify if there are too many high/critical risks unaddressed
+3. **Top Priority Risks** - Identify the 3-5 risks that need the most urgent attention and explain why
+4. **Treatment Coverage Gaps** - Risks still pending treatment, risks where the treatment strategy seems insufficient
+5. **Control Mapping Gaps** - Risks without adequate ISO 27001 Annex A control references; suggest which controls should be mapped
+6. **Ownership Gaps** - Risks without assigned owners
+7. **Recommendations** - 3-5 specific, actionable recommendations to improve the overall risk posture
+
+Focus on practical, actionable advice. Reference specific risk IDs and ISO 27001 control IDs (A.x.x) where relevant.`,
+        },
+        { role: 'user', content: `Please analyze this risk register:\n${contextMessage}` },
+      ],
+      temperature: 0.3,
+      max_tokens: 3000,
+    });
+
+    const analysis = completion.choices[0]?.message?.content || 'Unable to generate analysis.';
+    logger.info(`AI register analysis generated for organization ${organizationId}`);
+
+    res.json({ success: true, data: { analysis, generatedAt: new Date().toISOString() } });
+  })
+);
+
+// AI: Suggest scoring/controls for new risk
+router.post(
+  '/ai-suggest',
+  authenticate,
+  requirePermission('risks', 'edit'),
+  asyncHandler(async (req, res) => {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new AppError('OpenAI API key is not configured. Please set OPENAI_API_KEY.', 503);
+    }
+
+    const authReq = req as AuthenticatedRequest;
+    const { title, description, organizationId } = req.body;
+    if (!organizationId || !title || !description) {
+      throw new AppError('organizationId, title, and description are required', 400);
+    }
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('Not authorized', 403);
+    }
+
+    const existingRisks = await prisma.risk.findMany({
+      where: { organizationId, status: { not: 'CLOSED' } },
+      select: { riskId: true, title: true },
+      take: 60,
+    });
+
+    const controls = await prisma.control.findMany({
+      where: { organizationId, frameworkSlug: 'iso27001' },
+      select: { controlId: true, name: true, implementationStatus: true },
+    });
+
+    const existingList = existingRisks.map((r: any) => `${r.riskId}: ${r.title}`).join('\n  ');
+    const controlsList = controls.map((c: any) => `${c.controlId}: ${c.name} [${c.implementationStatus}]`).join('\n  ');
+
+    const contextMessage = `
+# New Risk Being Created
+Title: ${title}
+Description: ${description}
+
+## Existing Risks in Register (check for duplicates)
+  ${existingList}
+
+## Available ISO 27001 Controls
+  ${controlsList}
+`;
+
+    const openai = new OpenAI({ apiKey });
+    const chatModel = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
+
+    const completion = await openai.chat.completions.create({
+      model: chatModel,
+      messages: [
+        {
+          role: 'system',
+          content: `You are an ISO 27001:2022 risk management expert. A user is creating a new risk entry. Based on the title and description, provide suggestions in this EXACT JSON format (no markdown, just valid JSON):
+
+{
+  "suggestedLikelihood": <1-5>,
+  "likelihoodRationale": "<brief explanation>",
+  "suggestedImpact": <1-5>,
+  "impactRationale": "<brief explanation>",
+  "suggestedControls": ["<controlId1>", "<controlId2>"],
+  "controlsRationale": "<brief explanation>",
+  "affectsConfidentiality": <true/false>,
+  "affectsIntegrity": <true/false>,
+  "affectsAvailability": <true/false>,
+  "ciaRationale": "<brief explanation>",
+  "potentialDuplicates": ["<RISK-XXX>"],
+  "duplicateNotes": "<explanation or 'No similar risks identified'>",
+  "suggestedCategory": "<OPERATIONAL|TECHNICAL|COMPLIANCE|FINANCIAL|STRATEGIC>",
+  "additionalNotes": "<any other relevant observations, max 2 sentences>"
+}
+
+Only reference control IDs from the provided list. Likelihood scale: 1=Rare, 2=Unlikely, 3=Possible, 4=Likely, 5=Frequent. Impact scale: 1=Incidental, 2=Minor, 3=Moderate, 4=Major, 5=Catastrophic. Be practical and conservative. Return ONLY valid JSON.`,
+        },
+        { role: 'user', content: contextMessage },
+      ],
+      temperature: 0.3,
+      max_tokens: 1000,
+    });
+
+    const rawResponse = completion.choices[0]?.message?.content || '{}';
+    let suggestions;
+    try {
+      const cleaned = rawResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      suggestions = JSON.parse(cleaned);
+    } catch {
+      suggestions = { error: 'Failed to parse AI suggestions', rawResponse };
+    }
+
+    logger.info(`AI suggestion generated for new risk in org ${organizationId}`);
+    res.json({ success: true, data: { suggestions, generatedAt: new Date().toISOString() } });
+  })
+);
+
 // Get single risk
 router.get(
   '/:id',
@@ -1116,7 +1379,7 @@ router.patch(
   })
 );
 
-// Get risk treatments
+// Get risk treatments for a specific risk
 router.get(
   '/:id/treatment',
   authenticate,
@@ -1147,6 +1410,130 @@ router.get(
       success: true,
       data: treatments,
     });
+  })
+);
+
+// AI: Review a single risk
+router.post(
+  '/:id/ai-review',
+  authenticate,
+  uuidParam('id'),
+  validate,
+  asyncHandler(async (req, res) => {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new AppError('OpenAI API key is not configured. Please set OPENAI_API_KEY.', 503);
+    }
+
+    const { id } = req.params;
+    const authReq = req as AuthenticatedRequest;
+
+    const risk = await prisma.risk.findUnique({
+      where: { id },
+      include: {
+        organization: { select: { id: true, name: true, riskAcceptConfidentiality: true, riskAcceptIntegrity: true, riskAcceptAvailability: true } },
+        owner: { select: { firstName: true, lastName: true, email: true } },
+        controls: { include: { control: { select: { controlId: true, name: true, implementationStatus: true, category: true } } } },
+        assets: { include: { asset: { select: { name: true, classification: true, assetType: true } } } },
+        treatments: { orderBy: { createdAt: 'desc' }, take: 5 },
+      },
+    });
+
+    if (!risk) throw new AppError('Risk not found', 404);
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === risk.organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('Not authorized', 403);
+    }
+
+    const otherRisks = await prisma.risk.findMany({
+      where: { organizationId: risk.organizationId, id: { not: id }, status: { not: 'CLOSED' } },
+      select: { riskId: true, title: true, likelihood: true, impact: true, inherentRisk: true, treatment: true },
+      take: 50,
+    });
+
+    const linkedControls = risk.controls.map((rc: any) =>
+      `${rc.control.controlId} - ${rc.control.name} [${rc.control.implementationStatus}]`
+    ).join('\n  ') || 'None linked';
+
+    const linkedAssets = risk.assets.map((ra: any) =>
+      `${ra.asset.name} (${ra.asset.assetType}, ${ra.asset.classification})`
+    ).join(', ') || 'None linked';
+
+    const treatmentHistory = risk.treatments.map((t: any) =>
+      `Response: ${t.riskResponse}, Residual: ${t.residualProbability}x${t.residualImpact}=${t.residualRisk}, Control: ${(t.controlDescription || '').substring(0, 100)}`
+    ).join('\n  ') || 'No treatments recorded';
+
+    const otherRisksSummary = otherRisks.map((r: any) =>
+      `${r.riskId}: ${r.title} [Score:${r.inherentRisk}]`
+    ).join('\n  ');
+
+    const contextMessage = `
+# Risk Under Review
+Risk ID: ${risk.riskId}
+Title: ${risk.title}
+Description: ${risk.description || 'No description'}
+Category: ${risk.category || 'Not categorized'}
+
+## Risk Scoring
+- Inherent: Likelihood=${risk.likelihood}, Impact=${risk.impact}, Score=${risk.inherentRisk}
+- Residual: Probability=${risk.residualProbability || 'N/A'}, Impact=${risk.residualImpact || 'N/A'}, Score=${risk.residualRisk || 'N/A'}
+
+## CIA Impact
+- Confidentiality: ${risk.affectsConfidentiality ? 'YES' : 'No'} (Org threshold: ${risk.organization.riskAcceptConfidentiality})
+- Integrity: ${risk.affectsIntegrity ? 'YES' : 'No'} (Org threshold: ${risk.organization.riskAcceptIntegrity})
+- Availability: ${risk.affectsAvailability ? 'YES' : 'No'} (Org threshold: ${risk.organization.riskAcceptAvailability})
+
+## Treatment: ${risk.treatment}
+Control Description: ${risk.controlDescription || 'None'}
+Controls Reference: ${risk.controlsReference || 'None'}
+
+## Linked ISO 27001 Controls
+  ${linkedControls}
+
+## Linked Assets: ${linkedAssets}
+
+## Treatment History
+  ${treatmentHistory}
+
+## Owner: ${risk.owner ? `${risk.owner.firstName} ${risk.owner.lastName}` : 'Unassigned'}
+
+## Other Risks in Register (for duplicate detection)
+  ${otherRisksSummary}
+`;
+
+    const openai = new OpenAI({ apiKey });
+    const chatModel = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
+
+    const completion = await openai.chat.completions.create({
+      model: chatModel,
+      messages: [
+        {
+          role: 'system',
+          content: `You are an ISO 27001:2022 risk management expert reviewing a single risk assessment entry. Provide a thorough but concise review:
+
+1. **Assessment Quality** - Is the risk description comprehensive? Does it clearly identify threat, vulnerability, and impact?
+2. **Scoring Analysis** - Is the likelihood/impact scoring appropriate? Is the inherent risk score reasonable?
+3. **Treatment Evaluation** - Is the chosen treatment strategy appropriate? Are residual risk levels acceptable given org thresholds?
+4. **Control Mapping** - Are the linked ISO 27001 Annex A controls adequate? Suggest additional controls (reference specific A.x.x IDs).
+5. **CIA Analysis** - Are the confidentiality/integrity/availability flags correctly set?
+6. **Potential Duplicates** - Flag any risks in the register that appear similar or overlapping.
+7. **Recommendations** - Specific, actionable improvements for this risk entry.
+
+Be concise but specific. Reference ISO 27001:2022 Annex A control numbers. Keep total response under 800 words.`,
+        },
+        { role: 'user', content: `Please review this risk assessment:\n${contextMessage}` },
+      ],
+      temperature: 0.3,
+      max_tokens: 2000,
+    });
+
+    const analysis = completion.choices[0]?.message?.content || 'Unable to generate analysis.';
+    logger.info(`AI review generated for risk ${id} (${risk.riskId})`);
+
+    res.json({ success: true, data: { analysis, generatedAt: new Date().toISOString() } });
   })
 );
 

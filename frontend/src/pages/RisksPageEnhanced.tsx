@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/stores/auth.store'
 import { riskApi, organizationApi } from '@/lib/api'
+import api from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -86,6 +87,8 @@ import {
   Check,
   ChevronsUpDown,
   Calendar,
+  Sparkles,
+  Bot,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import axiosInstance from '@/lib/api'
@@ -149,6 +152,53 @@ const getImpactLabel = (value: number) =>
 
 const getApprovalConfig = (status: string) =>
   APPROVAL_STATUS_CONFIG[status] || APPROVAL_STATUS_CONFIG.DRAFT
+
+// ============================================
+// MARKDOWN RENDERER (for AI responses)
+// ============================================
+
+function renderMarkdown(text: string) {
+  const lines = text.split('\n')
+  return lines.map((line, i) => {
+    if (line.startsWith('### ')) return <h3 key={i} className="text-sm font-semibold mt-3 mb-1 text-foreground">{line.replace('### ', '')}</h3>
+    if (line.startsWith('## ')) return <h2 key={i} className="text-base font-semibold mt-4 mb-2 text-foreground">{line.replace('## ', '')}</h2>
+    if (line.startsWith('# ')) return <h2 key={i} className="text-lg font-bold mt-4 mb-2 text-foreground">{line.replace('# ', '')}</h2>
+    if (line.match(/^[-*]\s+\*\*/)) {
+      const content = line.replace(/^[-*]\s*/, '')
+      return (
+        <div key={i} className="flex gap-2 ml-2 my-0.5">
+          <span className="text-violet-400 mt-0.5 flex-shrink-0">{'\u2022'}</span>
+          <span dangerouslySetInnerHTML={{ __html: content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*(.*?)\*/g, '<em>$1</em>').replace(/`(.*?)`/g, '<code class="px-1 py-0.5 bg-violet-100 rounded text-xs font-mono">$1</code>') }} />
+        </div>
+      )
+    }
+    if (line.match(/^[-*]\s+/)) {
+      const content = line.replace(/^[-*]\s*/, '')
+      return (
+        <div key={i} className="flex gap-2 ml-2 my-0.5">
+          <span className="text-violet-400 mt-0.5 flex-shrink-0">{'\u2022'}</span>
+          <span dangerouslySetInnerHTML={{ __html: content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*(.*?)\*/g, '<em>$1</em>').replace(/`(.*?)`/g, '<code class="px-1 py-0.5 bg-violet-100 rounded text-xs font-mono">$1</code>') }} />
+        </div>
+      )
+    }
+    if (line.match(/^\d+\.\s/)) {
+      const num = line.match(/^(\d+)\./)?.[1]
+      const content = line.replace(/^\d+\.\s*/, '')
+      return (
+        <div key={i} className="flex gap-2 ml-2 my-0.5">
+          <span className="text-violet-500 font-semibold min-w-[20px] flex-shrink-0">{num}.</span>
+          <span dangerouslySetInnerHTML={{ __html: content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*(.*?)\*/g, '<em>$1</em>').replace(/`(.*?)`/g, '<code class="px-1 py-0.5 bg-violet-100 rounded text-xs font-mono">$1</code>') }} />
+        </div>
+      )
+    }
+    if (!line.trim()) return <div key={i} className="h-2" />
+    return (
+      <p key={i} className="my-0.5" dangerouslySetInnerHTML={{
+        __html: line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*(.*?)\*/g, '<em>$1</em>').replace(/`(.*?)`/g, '<code class="px-1 py-0.5 bg-violet-100 rounded text-xs font-mono">$1</code>')
+      }} />
+    )
+  })
+}
 
 // ============================================
 // MAIN COMPONENT
@@ -216,6 +266,14 @@ export default function RisksPage() {
 
   const [retireData, setRetireData] = useState({ reason: '' })
 
+  // AI state
+  const [aiReviewRiskId, setAiReviewRiskId] = useState<string | null>(null)
+  const [aiReviewResult, setAiReviewResult] = useState<string | null>(null)
+  const [aiReviewLoading, setAiReviewLoading] = useState(false)
+  const [aiRegisterAnalysis, setAiRegisterAnalysis] = useState<string | null>(null)
+  const [aiRegisterLoading, setAiRegisterLoading] = useState(false)
+  const [isAiRegisterOpen, setIsAiRegisterOpen] = useState(false)
+
   // Column visibility toggles
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
     riskId: true,
@@ -273,6 +331,15 @@ export default function RisksPage() {
       return response.data.data
     },
     enabled: !!selectedRisk?.id,
+  })
+
+  const { data: allTreatments } = useQuery({
+    queryKey: ['all-risk-treatments', currentOrganizationId],
+    queryFn: async () => {
+      const response = await axiosInstance.get(`/risks/treatments/all?organizationId=${currentOrganizationId}`)
+      return response.data.data
+    },
+    enabled: !!currentOrganizationId,
   })
 
   const { data: retiredRisks } = useQuery({
@@ -341,6 +408,7 @@ export default function RisksPage() {
     queryClient.invalidateQueries({ queryKey: ['risks'] })
     queryClient.invalidateQueries({ queryKey: ['risk-register-document'] })
     queryClient.invalidateQueries({ queryKey: ['risk-register-versions'] })
+    queryClient.invalidateQueries({ queryKey: ['all-risk-treatments'] })
   }
 
   const updateMutation = useMutation({
@@ -531,15 +599,45 @@ export default function RisksPage() {
     }
   }
 
+  // AI handlers
+  const handleAiReview = async (riskId: string) => {
+    setAiReviewRiskId(riskId)
+    setAiReviewLoading(true)
+    setAiReviewResult(null)
+    try {
+      const result = await riskApi.aiReview(riskId)
+      setAiReviewResult(result.data?.data?.analysis || result.data?.analysis)
+    } catch (err: any) {
+      const msg = err?.response?.data?.error?.message || err?.response?.data?.error || 'Failed to get AI review. Ensure OpenAI API key is configured.'
+      setAiReviewResult(`**Error:** ${msg}`)
+    } finally {
+      setAiReviewLoading(false)
+    }
+  }
+
+  const handleAiAnalyzeRegister = async () => {
+    setAiRegisterLoading(true)
+    setAiRegisterAnalysis(null)
+    setIsAiRegisterOpen(true)
+    try {
+      const result = await riskApi.aiAnalyzeRegister(currentOrganizationId!)
+      setAiRegisterAnalysis(result.data?.data?.analysis || result.data?.analysis)
+    } catch (err: any) {
+      const msg = err?.response?.data?.error?.message || err?.response?.data?.error || 'Failed to generate analysis. Ensure OpenAI API key is configured.'
+      setAiRegisterAnalysis(`**Error:** ${msg}`)
+    } finally {
+      setAiRegisterLoading(false)
+    }
+  }
+
   const filteredRisks = risks?.filter((risk: any) =>
     risk.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
     risk.riskId.toLowerCase().includes(searchTerm.toLowerCase())
   ) || []
 
-  const filteredTreatments = treatments?.map((treatment: any) => {
-    const risk = risks?.find((r: any) => r.id === treatment.riskId)
-    return { ...treatment, risk }
-  }) || []
+  const filteredTreatments = (allTreatments || []).filter((t: any) =>
+    !searchTerm || t.risk?.title?.toLowerCase().includes(searchTerm.toLowerCase()) || t.risk?.riskId?.toLowerCase().includes(searchTerm.toLowerCase())
+  )
 
   // Document version grouping
   const docApproval = getApprovalConfig(riskDoc?.approvalStatus || 'DRAFT')
@@ -586,10 +684,21 @@ export default function RisksPage() {
             ISO/IEC 27001:2022 - Organization Level Risk Register
           </p>
         </div>
-        <Button onClick={() => navigate('/risks/new')}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Risk
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={handleAiAnalyzeRegister}
+            disabled={aiRegisterLoading}
+            className="gap-2 border-violet-200 text-violet-700 hover:bg-violet-50"
+          >
+            {aiRegisterLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            AI Analysis
+          </Button>
+          <Button onClick={() => navigate('/risks/new')}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Risk
+          </Button>
+        </div>
       </div>
 
       {/* Document Info Bar */}
@@ -669,6 +778,44 @@ export default function RisksPage() {
                 <p className="text-sm mt-1.5">{formatDate(riskDoc.updatedAt)}</p>
               </div>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* AI Register Analysis Panel */}
+      {isAiRegisterOpen && (
+        <Card className="border-violet-200 bg-gradient-to-r from-violet-50/30 to-purple-50/20">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium flex items-center justify-between">
+              <span className="flex items-center gap-2 text-violet-700">
+                <Bot className="h-4 w-4" />
+                AI Risk Register Analysis
+              </span>
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setIsAiRegisterOpen(false); setAiRegisterAnalysis(null) }}>
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {aiRegisterLoading ? (
+              <div className="flex flex-col items-center gap-3 py-10">
+                <div className="relative">
+                  <Loader2 className="h-8 w-8 animate-spin text-violet-500" />
+                  <Sparkles className="h-4 w-4 text-violet-400 absolute -top-1 -right-1 animate-pulse" />
+                </div>
+                <p className="text-sm font-medium text-violet-700">Analyzing your risk register...</p>
+                <p className="text-xs text-muted-foreground">Reviewing all {risks?.length || 0} risks, treatments, and control coverage.</p>
+              </div>
+            ) : aiRegisterAnalysis ? (
+              <div className="bg-white/60 border border-violet-100 rounded-lg p-4 max-h-[50vh] overflow-y-auto">
+                <div className="flex items-center gap-2 mb-3 pb-2 border-b border-violet-100">
+                  <Sparkles className="h-3.5 w-3.5 text-violet-500" />
+                  <span className="text-xs font-medium text-violet-600">Generated by AI</span>
+                  <span className="text-[10px] text-muted-foreground ml-auto">Review all recommendations before acting</span>
+                </div>
+                <div className="text-sm leading-relaxed">{renderMarkdown(aiRegisterAnalysis)}</div>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       )}
@@ -784,6 +931,7 @@ export default function RisksPage() {
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
                                     <DropdownMenuItem onClick={() => handleEdit(risk)}><Pencil className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleAiReview(risk.id)} className="text-violet-700"><Sparkles className="mr-2 h-4 w-4" />AI Review</DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => { setSelectedRisk(risk); setTreatmentSelectedControls([]); setTreatmentData({ residualProbability: 3, residualImpact: 3, riskResponse: 'MITIGATE', controlDescription: '', controlImplementationDate: '', comments: '' }); setIsTreatmentOpen(true) }}><ShieldCheck className="mr-2 h-4 w-4" />Add Treatment</DropdownMenuItem>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem onClick={() => { setSelectedRisk(risk); setIsRetireOpen(true) }}><Archive className="mr-2 h-4 w-4" />Retire Risk</DropdownMenuItem>
@@ -812,50 +960,90 @@ export default function RisksPage() {
               <CardTitle>Risk Treatment Plan</CardTitle>
               <CardDescription>Track risk treatment activities and control implementations</CardDescription>
             </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Sl No</TableHead>
-                    <TableHead>Risk ID</TableHead>
-                    <TableHead>Risk Item</TableHead>
-                    <TableHead>Risk Owner</TableHead>
-                    <TableHead>Risk Description</TableHead>
-                    <TableHead>Identification Date</TableHead>
-                    <TableHead>Residual Risk</TableHead>
-                    <TableHead>Risk Response</TableHead>
-                    <TableHead>Control Description</TableHead>
-                    <TableHead>Implementation Date</TableHead>
-                    <TableHead>Comments</TableHead>
-                    <TableHead>Treatment Time (days)</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredTreatments.length === 0 ? (
-                    <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground">No treatments found. Select a risk to view its treatments.</TableCell></TableRow>
-                  ) : (
-                    filteredTreatments.map((treatment: any, index: number) => {
-                      const residualLevel = getRiskLevel(treatment.residualRisk)
-                      return (
-                        <TableRow key={treatment.id}>
-                          <TableCell>{index + 1}</TableCell>
-                          <TableCell className="font-medium">{treatment.risk?.riskId}</TableCell>
-                          <TableCell>{treatment.risk?.title}</TableCell>
-                          <TableCell>{treatment.risk?.owner ? `${treatment.risk.owner.firstName} ${treatment.risk.owner.lastName}` : '-'}</TableCell>
-                          <TableCell className="max-w-[200px] text-sm">{treatment.risk?.description}</TableCell>
-                          <TableCell>{treatment.risk?.createdAt ? formatDate(treatment.risk.createdAt) : '-'}</TableCell>
-                          <TableCell><Badge className={residualLevel.color}>{residualLevel.label} ({treatment.residualRisk})</Badge></TableCell>
-                          <TableCell><Badge variant="outline">{treatment.riskResponse}</Badge></TableCell>
-                          <TableCell className="max-w-[200px] text-sm">{treatment.controlDescription}</TableCell>
-                          <TableCell>{treatment.controlImplementationDate ? formatDate(treatment.controlImplementationDate) : '-'}</TableCell>
-                          <TableCell className="max-w-[200px] text-sm">{treatment.comments}</TableCell>
-                          <TableCell>{treatment.treatmentTimeInDays}</TableCell>
-                        </TableRow>
-                      )
-                    })
-                  )}
-                </TableBody>
-              </Table>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto relative">
+                <div className="max-h-[65vh] overflow-auto">
+                  <table className="w-full text-sm border-collapse" style={{ minWidth: '1400px' }}>
+                    <thead>
+                      <tr className="border-b bg-muted/50">
+                        <th className="sticky left-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[50px] border-r text-xs">Sl</th>
+                        <th className="sticky left-[50px] z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[70px] border-r">Risk ID</th>
+                        <th className="sticky left-[120px] z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[160px] border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Risk Item</th>
+                        <th className="px-3 py-3 text-left font-medium w-[120px]">Risk Owner</th>
+                        <th className="px-3 py-3 text-left font-medium w-[200px]">Risk Description</th>
+                        <th className="px-3 py-3 text-left font-medium w-[100px] whitespace-nowrap">Ident. Date</th>
+                        <th className="px-3 py-3 text-left font-medium w-[110px] whitespace-nowrap">Residual Risk</th>
+                        <th className="px-3 py-3 text-left font-medium w-[100px]">Response</th>
+                        <th className="px-3 py-3 text-left font-medium w-[220px]">Control Description</th>
+                        <th className="px-3 py-3 text-left font-medium w-[100px] whitespace-nowrap">Impl. Date</th>
+                        <th className="px-3 py-3 text-left font-medium w-[180px]">Comments</th>
+                        <th className="px-3 py-3 text-center font-medium w-[60px] whitespace-nowrap">Days</th>
+                        <th className="sticky right-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-center font-medium w-[60px] border-l shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">Edit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredTreatments.length === 0 ? (
+                        <tr><td colSpan={13} className="text-center text-muted-foreground py-12">
+                          <div className="flex flex-col items-center gap-2">
+                            <ShieldCheck className="h-10 w-10 text-muted-foreground/40" />
+                            <p>No risk treatments found</p>
+                            <p className="text-xs">Add treatments from the Risk Assessment tab using the row actions menu</p>
+                          </div>
+                        </td></tr>
+                      ) : (
+                        filteredTreatments.map((treatment: any, index: number) => {
+                          const residualLevel = getRiskLevel(treatment.residualRisk)
+                          const responseColor = {
+                            'MITIGATE': 'bg-blue-50 text-blue-700 border-blue-200',
+                            'ACCEPT': 'bg-green-50 text-green-700 border-green-200',
+                            'TRANSFER': 'bg-purple-50 text-purple-700 border-purple-200',
+                            'AVOID': 'bg-red-50 text-red-700 border-red-200',
+                          }[treatment.riskResponse] || 'bg-gray-50 text-gray-700 border-gray-200'
+                          return (
+                            <tr key={treatment.id} className="border-b hover:bg-muted/30 transition-colors">
+                              <td className="sticky left-0 z-10 bg-background px-3 py-2.5 text-center text-xs text-muted-foreground border-r">{index + 1}</td>
+                              <td className="sticky left-[50px] z-10 bg-background px-3 py-2.5 font-mono text-xs font-semibold border-r">{treatment.risk?.riskId}</td>
+                              <td className="sticky left-[120px] z-10 bg-background px-3 py-2.5 border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                <span className="font-medium text-sm line-clamp-2">{treatment.risk?.title}</span>
+                              </td>
+                              <td className="px-3 py-2.5 text-sm truncate max-w-[120px]">{treatment.risk?.owner ? `${treatment.risk.owner.firstName} ${treatment.risk.owner.lastName}` : '-'}</td>
+                              <td className="px-3 py-2.5">
+                                <span className="text-xs text-muted-foreground line-clamp-2">{treatment.risk?.description || '-'}</span>
+                              </td>
+                              <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{treatment.risk?.createdAt ? formatDate(treatment.risk.createdAt) : '-'}</td>
+                              <td className="px-3 py-2.5"><Badge className={cn('text-xs', residualLevel.color)}>{residualLevel.label} ({treatment.residualRisk})</Badge></td>
+                              <td className="px-3 py-2.5"><Badge variant="outline" className={cn('text-xs', responseColor)}>{treatment.riskResponse}</Badge></td>
+                              <td className="px-3 py-2.5">
+                                <span className="text-xs text-muted-foreground line-clamp-2">{treatment.controlDescription || '-'}</span>
+                              </td>
+                              <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{treatment.controlImplementationDate ? formatDate(treatment.controlImplementationDate) : '-'}</td>
+                              <td className="px-3 py-2.5">
+                                <span className="text-xs text-muted-foreground line-clamp-2">{treatment.comments || '-'}</span>
+                              </td>
+                              <td className="px-3 py-2.5 text-center">
+                                <span className="text-xs font-mono font-medium">{treatment.treatmentTimeInDays ?? '-'}</span>
+                              </td>
+                              <td className="sticky right-0 z-10 bg-background px-3 py-2.5 text-center border-l shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 w-7 p-0"
+                                  onClick={() => {
+                                    const risk = risks?.find((r: any) => r.id === treatment.riskId)
+                                    if (risk) handleEdit(risk)
+                                  }}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                              </td>
+                            </tr>
+                          )
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1470,10 +1658,23 @@ export default function RisksPage() {
 
           {/* Footer */}
           <div className="border-t bg-muted/30 px-6 py-3.5 flex items-center justify-between">
-            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-              Editing will reset approval status to <strong>Draft</strong>
-            </p>
+            <div className="flex items-center gap-3">
+              <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                Editing will reset approval status to <strong>Draft</strong>
+              </p>
+              {selectedRisk && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => { setIsEditOpen(false); handleAiReview(selectedRisk.id) }}
+                  className="gap-1.5 text-violet-700 border-violet-200 hover:bg-violet-50 hover:text-violet-800"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  AI Review
+                </Button>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={() => setIsEditOpen(false)}>Cancel</Button>
               <Button
@@ -2028,6 +2229,46 @@ export default function RisksPage() {
               Start New Revision
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* AI Risk Review Dialog */}
+      <Dialog open={!!aiReviewRiskId} onOpenChange={(open) => { if (!open) { setAiReviewRiskId(null); setAiReviewResult(null) } }}>
+        <DialogContent className="sm:max-w-[750px] max-h-[85vh] p-0 gap-0 overflow-hidden">
+          <div className="bg-gradient-to-r from-violet-600 to-purple-700 px-6 py-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-white/10 rounded-lg p-2">
+                <Sparkles className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <DialogTitle className="text-white text-lg">AI Risk Review</DialogTitle>
+                <DialogDescription className="text-violet-200 text-xs mt-0.5">
+                  AI-generated analysis of this risk assessment
+                </DialogDescription>
+              </div>
+            </div>
+          </div>
+          <div className="overflow-auto max-h-[calc(85vh-80px)] p-6">
+            {aiReviewLoading ? (
+              <div className="flex flex-col items-center gap-3 py-16">
+                <div className="relative">
+                  <Loader2 className="h-8 w-8 animate-spin text-violet-500" />
+                  <Sparkles className="h-4 w-4 text-violet-400 absolute -top-1 -right-1 animate-pulse" />
+                </div>
+                <p className="text-sm font-medium text-violet-700">Reviewing risk assessment...</p>
+                <p className="text-xs text-muted-foreground">Analyzing description, scoring, controls, and treatment strategy.</p>
+              </div>
+            ) : aiReviewResult ? (
+              <div className="bg-gradient-to-r from-violet-50/50 to-purple-50/30 border border-violet-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3 pb-2 border-b border-violet-100">
+                  <Bot className="h-3.5 w-3.5 text-violet-500" />
+                  <span className="text-xs font-medium text-violet-600">AI Expert Review</span>
+                  <span className="text-[10px] text-muted-foreground ml-auto">Review all recommendations before acting</span>
+                </div>
+                <div className="text-sm leading-relaxed">{renderMarkdown(aiReviewResult)}</div>
+              </div>
+            ) : null}
+          </div>
         </DialogContent>
       </Dialog>
 

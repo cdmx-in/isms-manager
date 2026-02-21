@@ -17,13 +17,47 @@ router.post('/register', (_req, res) => {
   });
 });
 
-// Login - disabled (Google OAuth only)
-router.post('/login', (_req, res) => {
-  res.status(403).json({
-    success: false,
-    error: { message: 'Email/password login is disabled. Please use Google sign-in.' },
-  });
-});
+// Login (email/password via Passport local strategy)
+router.post(
+  '/login',
+  asyncHandler(async (req, res, next) => {
+    passport.authenticate('local', (err: any, user: any, info: any) => {
+      if (err) return next(err);
+      if (!user) {
+        return res.status(401).json({
+          success: false,
+          error: { message: info?.message || 'Invalid email or password' },
+        });
+      }
+      req.logIn(user, async (loginErr) => {
+        if (loginErr) return next(loginErr);
+
+        await createAuditLog({
+          userId: user.id,
+          action: 'LOGIN',
+          entityType: 'User',
+          entityId: user.id,
+          newValues: { provider: 'local' },
+          ipAddress: req.ip,
+          userAgent: req.get('user-agent'),
+        });
+
+        // Return user data with effective permissions
+        const userData = { ...user } as any;
+        if (userData.organizationMemberships) {
+          userData.organizationMemberships = userData.organizationMemberships.map((m: any) => ({
+            ...m,
+            effectivePermissions: m.orgRole
+              ? m.orgRole.permissions
+              : getLegacyPermissions(m.role),
+          }));
+        }
+
+        res.json({ success: true, data: userData });
+      });
+    })(req, res, next);
+  })
+);
 
 // Logout — destroy session in Redis
 router.post(

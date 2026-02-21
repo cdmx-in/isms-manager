@@ -1332,7 +1332,15 @@ async function main() {
 
   const riskDoc = await prisma.riskRegisterDocument.upsert({
     where: { organizationId: org.id },
-    update: {},
+    update: {
+      identification: 'ISMS-R-004',
+      title: 'ISMS Org Level Risk Register',
+      classification: 'Internal',
+      version: 7.0,
+      approvalStatus: ApprovalStatus.APPROVED,
+      reviewerId: cooId,
+      approverId: ceoId,
+    },
     create: {
       organizationId: org.id,
       identification: 'ISMS-R-004',
@@ -1351,7 +1359,13 @@ async function main() {
       where: {
         riskRegisterDocumentId_version: { riskRegisterDocumentId: riskDoc.id, version: v.version },
       },
-      update: {},
+      update: {
+        changeDescription: v.desc,
+        actor: v.actor,
+        actorDesignation: v.actorDesig,
+        action: v.action,
+        createdById: actorUserId,
+      },
       create: {
         riskRegisterDocumentId: riskDoc.id,
         version: v.version,
