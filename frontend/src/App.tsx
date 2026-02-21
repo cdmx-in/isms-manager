@@ -20,6 +20,10 @@ import AssessmentConductPage from '@/pages/AssessmentConductPage'
 import { AuditLogPage } from '@/pages/AuditLogPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { UserManagementPage } from '@/pages/UserManagementPage'
+import { InfrastructureMonitorPage } from '@/pages/InfrastructureMonitorPage'
+import { GoogleWorkspacePage } from '@/pages/GoogleWorkspacePage'
+import { AzurePage } from '@/pages/AzurePage'
+import { OrganizationsPage } from '@/pages/OrganizationsPage'
 import { useEffect } from 'react'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -101,6 +105,10 @@ function App() {
           <Route path="exemptions/new" element={<PermissionGate module="exemptions"><RequestExemptionPage /></PermissionGate>} />
           <Route path="assessments" element={<PermissionGate module="assessments"><AssessmentsPage /></PermissionGate>} />
           <Route path="assessments/:id" element={<PermissionGate module="assessments"><AssessmentConductPage /></PermissionGate>} />
+          <Route path="infrastructure/cloudflare" element={<PermissionGate module="infrastructure"><InfrastructureMonitorPage /></PermissionGate>} />
+          <Route path="infrastructure/google-workspace" element={<PermissionGate module="infrastructure"><GoogleWorkspacePage /></PermissionGate>} />
+          <Route path="infrastructure/azure" element={<PermissionGate module="infrastructure"><AzurePage /></PermissionGate>} />
+          <Route path="organizations" element={<PermissionGate module="settings"><OrganizationsPage /></PermissionGate>} />
           <Route path="audit-log" element={<PermissionGate module="audit_log"><AuditLogPage /></PermissionGate>} />
           <Route path="users" element={<PermissionGate module="users"><UserManagementPage /></PermissionGate>} />
           <Route path="settings" element={<PermissionGate module="settings"><SettingsPage /></PermissionGate>} />

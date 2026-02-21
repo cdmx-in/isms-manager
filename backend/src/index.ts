@@ -41,9 +41,16 @@ import roleRoutes from './routes/role.routes.js';
 import exemptionRoutes from './routes/exemption.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
 import assessmentRoutes from './routes/assessment.routes.js';
+import infrastructureRoutes from './routes/infrastructure.routes.js';
+import googleWorkspaceRoutes from './routes/googleWorkspace.routes.js';
+import azureRoutes from './routes/azure.routes.js';
 
 import { logger } from './utils/logger.js';
 import { initMinIO } from './services/storage.service.js';
+import cron from 'node-cron';
+import { infraMonitorService } from './services/infraMonitor.service.js';
+import { gwMonitorService } from './services/gwMonitor.service.js';
+import { azureMonitorService } from './services/azureMonitor.service.js';
 
 // Initialize Prisma
 export const prisma = new PrismaClient({
@@ -236,6 +243,9 @@ const startServer = async () => {
     app.use('/api/exemptions', exemptionRoutes);
     app.use('/api/notifications', notificationRoutes);
     app.use('/api/assessments', assessmentRoutes);
+    app.use('/api/infrastructure', infrastructureRoutes);
+    app.use('/api/google-workspace', googleWorkspaceRoutes);
+    app.use('/api/azure', azureRoutes);
 
     // Error handlers (must come after routes)
     app.use(notFoundHandler);
@@ -248,6 +258,43 @@ const startServer = async () => {
     } catch (error) {
       logger.warn('MinIO initialization failed - file uploads may not work:', error);
     }
+
+    // Initialize Infrastructure Monitoring cron job (daily at midnight UTC)
+    // Scans all organizations that have infra monitoring configured and enabled
+    cron.schedule('0 0 * * *', async () => {
+      logger.info('Starting scheduled infrastructure scans for all configured organizations...');
+      try {
+        await infraMonitorService.runScheduledScans();
+        logger.info('Scheduled infrastructure scans completed');
+      } catch (error) {
+        logger.error('Scheduled infrastructure scans failed:', error);
+      }
+    }, { timezone: 'UTC' });
+    logger.info('Infrastructure monitoring cron scheduled (daily at midnight UTC)');
+
+    // Google Workspace monitoring cron (daily at 01:00 UTC, offset from infra)
+    cron.schedule('0 1 * * *', async () => {
+      logger.info('Starting scheduled Google Workspace scans for all configured organizations...');
+      try {
+        await gwMonitorService.runScheduledScans();
+        logger.info('Scheduled Google Workspace scans completed');
+      } catch (error) {
+        logger.error('Scheduled Google Workspace scans failed:', error);
+      }
+    }, { timezone: 'UTC' });
+    logger.info('Google Workspace monitoring cron scheduled (daily at 01:00 UTC)');
+
+    // Azure monitoring cron (daily at 02:00 UTC, offset from GW and infra)
+    cron.schedule('0 2 * * *', async () => {
+      logger.info('Starting scheduled Azure scans for all configured organizations...');
+      try {
+        await azureMonitorService.runScheduledScans();
+        logger.info('Scheduled Azure scans completed');
+      } catch (error) {
+        logger.error('Scheduled Azure scans failed:', error);
+      }
+    }, { timezone: 'UTC' });
+    logger.info('Azure monitoring cron scheduled (daily at 02:00 UTC)');
 
     // Start server
     app.listen(PORT, () => {

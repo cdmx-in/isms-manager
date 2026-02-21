@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/stores/auth.store'
+import { riskApi, organizationApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -33,6 +34,19 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -41,6 +55,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useToast } from '@/components/ui/use-toast'
 import { formatDate } from '@/lib/utils'
 import {
@@ -49,18 +64,28 @@ import {
   Pencil,
   Trash2,
   Loader2,
-  History,
   ShieldCheck,
   Archive,
-  SendHorizontal,
+  SlidersHorizontal,
+  FileText,
   CheckCircle2,
   XCircle,
   Clock,
+  SendHorizontal,
   FileCheck,
-  AlertTriangle,
-  SlidersHorizontal,
   Save,
   X,
+  Target,
+  Gauge,
+  Shield,
+  Info,
+  TrendingUp,
+  Zap,
+  MessageSquare,
+  AlertTriangle,
+  Check,
+  ChevronsUpDown,
+  Calendar,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import axiosInstance from '@/lib/api'
@@ -70,19 +95,19 @@ import axiosInstance from '@/lib/api'
 // ============================================
 
 const PROBABILITY_LABELS = [
-  { value: 1, label: 'Rare', color: 'bg-green-100 text-green-800' },
-  { value: 2, label: 'Unlikely', color: 'bg-blue-100 text-blue-800' },
-  { value: 3, label: 'Possible', color: 'bg-yellow-100 text-yellow-800' },
-  { value: 4, label: 'Likely', color: 'bg-orange-100 text-orange-800' },
-  { value: 5, label: 'Frequent', color: 'bg-red-100 text-red-800' },
+  { value: 1, label: 'Rare', description: 'May occur only in exceptional circumstances', color: 'bg-green-100 text-green-800 border-green-200' },
+  { value: 2, label: 'Unlikely', description: 'Could occur but not expected', color: 'bg-blue-100 text-blue-800 border-blue-200' },
+  { value: 3, label: 'Possible', description: 'Might occur at some time', color: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
+  { value: 4, label: 'Likely', description: 'Will probably occur in most circumstances', color: 'bg-orange-100 text-orange-800 border-orange-200' },
+  { value: 5, label: 'Frequent', description: 'Expected to occur in most circumstances', color: 'bg-red-100 text-red-800 border-red-200' },
 ]
 
 const IMPACT_LABELS = [
-  { value: 1, label: 'Incidental', color: 'bg-green-100 text-green-800' },
-  { value: 2, label: 'Minor', color: 'bg-blue-100 text-blue-800' },
-  { value: 3, label: 'Moderate', color: 'bg-yellow-100 text-yellow-800' },
-  { value: 4, label: 'Major', color: 'bg-orange-100 text-orange-800' },
-  { value: 5, label: 'Catastrophic', color: 'bg-red-100 text-red-800' },
+  { value: 1, label: 'Incidental', description: 'Minimal impact, easily absorbed', color: 'bg-green-100 text-green-800 border-green-200' },
+  { value: 2, label: 'Minor', description: 'Some impact, manageable with existing resources', color: 'bg-blue-100 text-blue-800 border-blue-200' },
+  { value: 3, label: 'Moderate', description: 'Significant impact requiring management attention', color: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
+  { value: 4, label: 'Major', description: 'Major impact on operations or compliance', color: 'bg-orange-100 text-orange-800 border-orange-200' },
+  { value: 5, label: 'Catastrophic', description: 'Severe or irreversible damage to organization', color: 'bg-red-100 text-red-800 border-red-200' },
 ]
 
 const RISK_RESPONSE_TYPES = ['MITIGATE', 'ACCEPT', 'TRANSFER', 'AVOID']
@@ -95,16 +120,25 @@ const APPROVAL_STATUS_CONFIG: Record<string, { label: string; color: string; ico
   REJECTED: { label: 'Rejected', color: 'bg-red-100 text-red-800', icon: XCircle },
 }
 
+const VERSION_ACTION_COLORS: Record<string, string> = {
+  'Draft & Review': 'bg-gray-100 text-gray-800',
+  'Submitted for Review': 'bg-blue-100 text-blue-800',
+  '1st Level Approval': 'bg-green-100 text-green-800',
+  '2nd Level Approval': 'bg-green-100 text-green-800',
+  'Updation': 'bg-amber-100 text-amber-800',
+  'Rejected': 'bg-red-100 text-red-800',
+}
+
 // ============================================
 // HELPERS
 // ============================================
 
 const getRiskLevel = (score: number) => {
-  if (score >= 20) return { label: 'Critical', color: 'bg-red-700 text-white' }
-  if (score >= 15) return { label: 'High', color: 'bg-orange-600 text-white' }
-  if (score >= 6) return { label: 'Medium', color: 'bg-yellow-600 text-white' }
-  if (score >= 2) return { label: 'Low', color: 'bg-green-600 text-white' }
-  return { label: 'Negligible', color: 'bg-gray-500 text-white' }
+  if (score >= 20) return { label: 'Critical', color: 'bg-red-700 text-white', bgLight: 'bg-red-50 border-red-200' }
+  if (score >= 15) return { label: 'High', color: 'bg-orange-600 text-white', bgLight: 'bg-orange-50 border-orange-200' }
+  if (score >= 6) return { label: 'Medium', color: 'bg-yellow-600 text-white', bgLight: 'bg-yellow-50 border-yellow-200' }
+  if (score >= 2) return { label: 'Low', color: 'bg-green-600 text-white', bgLight: 'bg-green-50 border-green-200' }
+  return { label: 'Negligible', color: 'bg-gray-500 text-white', bgLight: 'bg-gray-50 border-gray-200' }
 }
 
 const getProbabilityLabel = (value: number) =>
@@ -126,24 +160,40 @@ export default function RisksPage() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
-  // Get user's org role
-  const userOrgRole = user?.organizationMemberships?.find(
-    m => m.organizationId === currentOrganizationId
-  )?.role || user?.role || 'USER'
+  // User role
+  const userMembership = user?.organizationMemberships?.find(
+    (m: any) => m.organizationId === currentOrganizationId
+  )
+  const userOrgRole = userMembership?.role || user?.role || 'USER'
+  const isGlobalAdmin = user?.role === 'ADMIN'
+  const canEdit = ['ADMIN', 'LOCAL_ADMIN', 'AUDITOR'].includes(userOrgRole)
 
-  const canApproveFirst = ['LOCAL_ADMIN', 'ADMIN'].includes(userOrgRole)
-  const canApproveSecond = userOrgRole === 'ADMIN'
-  const canApprove = canApproveFirst || canApproveSecond
-
+  // Core state
   const [searchTerm, setSearchTerm] = useState('')
   const [activeTab, setActiveTab] = useState('register')
   const [isEditOpen, setIsEditOpen] = useState(false)
   const [isTreatmentOpen, setIsTreatmentOpen] = useState(false)
   const [isRetireOpen, setIsRetireOpen] = useState(false)
-  const [isVersionHistoryOpen, setIsVersionHistoryOpen] = useState(false)
+  const [selectedRisk, setSelectedRisk] = useState<any>(null)
+
+  // Document-level version control state
   const [isApprovalOpen, setIsApprovalOpen] = useState(false)
   const [isRejectOpen, setIsRejectOpen] = useState(false)
-  const [selectedRisk, setSelectedRisk] = useState<any>(null)
+  const [isSubmitOpen, setIsSubmitOpen] = useState(false)
+  const [isNewRevisionOpen, setIsNewRevisionOpen] = useState(false)
+  const [isDiscardRevisionOpen, setIsDiscardRevisionOpen] = useState(false)
+  const [editingVersionId, setEditingVersionId] = useState<string | null>(null)
+  const [editingDescription, setEditingDescription] = useState('')
+  const [rejectReason, setRejectReason] = useState('')
+  const [submitChangeDescription, setSubmitChangeDescription] = useState('')
+  const [submitVersionBump, setSubmitVersionBump] = useState<'none' | 'minor' | 'major'>('none')
+  const [revisionChangeDescription, setRevisionChangeDescription] = useState('')
+  const [revisionVersionBump, setRevisionVersionBump] = useState<'minor' | 'major'>('minor')
+
+  const [editSelectedControls, setEditSelectedControls] = useState<string[]>([])
+  const [editControlSearchOpen, setEditControlSearchOpen] = useState(false)
+  const [treatmentSelectedControls, setTreatmentSelectedControls] = useState<string[]>([])
+  const [treatmentControlSearchOpen, setTreatmentControlSearchOpen] = useState(false)
 
   const [formData, setFormData] = useState({
     title: '',
@@ -153,7 +203,6 @@ export default function RisksPage() {
     controlDescription: '',
     controlsReference: '',
     comments: '',
-    changeDescription: '',
   })
 
   const [treatmentData, setTreatmentData] = useState({
@@ -166,21 +215,12 @@ export default function RisksPage() {
   })
 
   const [retireData, setRetireData] = useState({ reason: '' })
-  const [approvalComments, setApprovalComments] = useState('')
-  const [rejectReason, setRejectReason] = useState('')
-  const [submitDescription, setSubmitDescription] = useState('')
-  const [isSubmitOpen, setIsSubmitOpen] = useState(false)
-  const [submitVersionBump, setSubmitVersionBump] = useState<'none' | 'minor' | 'major'>('none')
-  const [editingVersionId, setEditingVersionId] = useState<string | null>(null)
-  const [editingDescription, setEditingDescription] = useState('')
 
   // Column visibility toggles
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
     riskId: true,
     title: true,
     owner: true,
-    version: true,
-    approval: true,
     inherentProb: false,
     inherentImpact: false,
     inherentRisk: true,
@@ -197,8 +237,6 @@ export default function RisksPage() {
     { key: 'riskId', label: 'Risk ID', frozen: true, alwaysVisible: true },
     { key: 'title', label: 'Risk Item', frozen: true, alwaysVisible: true },
     { key: 'owner', label: 'Owner' },
-    { key: 'version', label: 'Version' },
-    { key: 'approval', label: 'Approval' },
     { key: 'inherentProb', label: 'Inherent Prob.' },
     { key: 'inherentImpact', label: 'Inherent Impact' },
     { key: 'inherentRisk', label: 'Inherent Risk' },
@@ -246,23 +284,54 @@ export default function RisksPage() {
     enabled: !!currentOrganizationId,
   })
 
-  const { data: versions } = useQuery({
-    queryKey: ['risk-versions', selectedRisk?.id],
+  // Document-level queries
+  const { data: riskDoc } = useQuery({
+    queryKey: ['risk-register-document', currentOrganizationId],
     queryFn: async () => {
-      const response = await axiosInstance.get(`/risks/${selectedRisk.id}/versions`)
-      return response.data.data
-    },
-    enabled: !!selectedRisk?.id && isVersionHistoryOpen,
-  })
-
-  const { data: pendingApprovals } = useQuery({
-    queryKey: ['pending-approvals', currentOrganizationId],
-    queryFn: async () => {
-      const response = await axiosInstance.get(`/risks/pending-approvals/list?organizationId=${currentOrganizationId}`)
-      return response.data.data
+      const response = await riskApi.getDocument(currentOrganizationId!)
+      return response.data?.data
     },
     enabled: !!currentOrganizationId,
   })
+
+  const { data: docVersions } = useQuery({
+    queryKey: ['risk-register-versions', currentOrganizationId],
+    queryFn: async () => {
+      const response = await riskApi.getDocumentVersions(currentOrganizationId!)
+      return response.data?.data || []
+    },
+    enabled: !!currentOrganizationId && (activeTab === 'versions' || activeTab === 'approvals'),
+  })
+
+  const { data: orgMembers } = useQuery({
+    queryKey: ['org-members-for-risks', currentOrganizationId],
+    queryFn: async () => {
+      const response = await organizationApi.get(currentOrganizationId!)
+      return response.data?.data?.members?.map((m: any) => ({
+        id: m.user.id,
+        firstName: m.user.firstName,
+        lastName: m.user.lastName,
+        email: m.user.email,
+        avatar: m.user.avatar,
+        role: m.role,
+        designation: m.user.designation,
+      })) || []
+    },
+    enabled: !!currentOrganizationId && (activeTab === 'approvals'),
+  })
+
+  // Fetch ISO 27001 controls for multi-select in edit dialog
+  const { data: iso27001Controls } = useQuery({
+    queryKey: ['controls-for-risk-edit', currentOrganizationId],
+    queryFn: async () => {
+      const response = await axiosInstance.get('/controls', {
+        params: { organizationId: currentOrganizationId, frameworkSlug: 'iso27001', limit: 200 },
+      })
+      return response.data?.data || []
+    },
+    enabled: !!currentOrganizationId,
+  })
+  const availableControls: any[] = iso27001Controls || []
 
   // ============================================
   // MUTATIONS
@@ -270,20 +339,9 @@ export default function RisksPage() {
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: ['risks'] })
-    queryClient.invalidateQueries({ queryKey: ['pending-approvals'] })
-    queryClient.invalidateQueries({ queryKey: ['risk-versions'] })
+    queryClient.invalidateQueries({ queryKey: ['risk-register-document'] })
+    queryClient.invalidateQueries({ queryKey: ['risk-register-versions'] })
   }
-
-  const createMutation = useMutation({
-    mutationFn: async (data: any) => axiosInstance.post('/risks', { ...data, organizationId: currentOrganizationId }),
-    onSuccess: () => {
-      invalidateAll()
-      toast({ title: 'Risk created successfully (v0.1 Draft)' })
-      setIsCreateOpen(false)
-      resetForm()
-    },
-    onError: () => toast({ title: 'Failed to create risk', variant: 'destructive' }),
-  })
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: any }) => axiosInstance.patch(`/risks/${id}`, data),
@@ -326,94 +384,95 @@ export default function RisksPage() {
     onError: () => toast({ title: 'Failed to retire risk', variant: 'destructive' }),
   })
 
-  // Approval workflow mutations
+  // Document-level mutations
+  const updateDocMutation = useMutation({
+    mutationFn: async (data: any) => riskApi.updateDocument(currentOrganizationId!, data),
+    onSuccess: () => {
+      invalidateAll()
+      toast({ title: 'Document updated' })
+    },
+    onError: () => toast({ title: 'Failed to update document', variant: 'destructive' }),
+  })
+
   const submitForReviewMutation = useMutation({
-    mutationFn: async ({ id, changeDescription, versionBump }: { id: string; changeDescription: string; versionBump?: string }) =>
-      axiosInstance.post(`/risks/${id}/submit-for-review`, { changeDescription, versionBump }),
+    mutationFn: async () => riskApi.submitForReview(currentOrganizationId!, submitChangeDescription, submitVersionBump),
     onSuccess: (res) => {
       invalidateAll()
-      toast({ title: res.data.message || 'Risk submitted for 1st level approval' })
+      toast({ title: res.data?.message || 'Risk Register submitted for review' })
       setIsSubmitOpen(false)
+      setSubmitChangeDescription('')
       setSubmitVersionBump('none')
     },
-    onError: (err: any) => toast({ title: err.response?.data?.error?.message || 'Failed to submit for review', variant: 'destructive' }),
+    onError: (err: any) => toast({ title: err.response?.data?.error?.message || 'Failed to submit', variant: 'destructive' }),
   })
 
   const firstApprovalMutation = useMutation({
-    mutationFn: async ({ id, comments }: { id: string; comments: string }) =>
-      axiosInstance.post(`/risks/${id}/first-approval`, { comments }),
+    mutationFn: async () => riskApi.firstApproval(currentOrganizationId!),
     onSuccess: (res) => {
       invalidateAll()
-      toast({ title: res.data.message || '1st level approval granted' })
+      toast({ title: res.data?.message || '1st level approval granted' })
       setIsApprovalOpen(false)
-      setApprovalComments('')
     },
     onError: (err: any) => toast({ title: err.response?.data?.error?.message || 'Failed to approve', variant: 'destructive' }),
   })
 
   const secondApprovalMutation = useMutation({
-    mutationFn: async ({ id, comments }: { id: string; comments: string }) =>
-      axiosInstance.post(`/risks/${id}/second-approval`, { comments }),
+    mutationFn: async () => riskApi.secondApproval(currentOrganizationId!),
     onSuccess: (res) => {
       invalidateAll()
-      toast({ title: res.data.message || 'Risk fully approved' })
+      toast({ title: res.data?.message || 'Risk Register fully approved' })
       setIsApprovalOpen(false)
-      setApprovalComments('')
     },
     onError: (err: any) => toast({ title: err.response?.data?.error?.message || 'Failed to approve', variant: 'destructive' }),
   })
 
   const rejectMutation = useMutation({
-    mutationFn: async ({ id, reason }: { id: string; reason: string }) =>
-      axiosInstance.post(`/risks/${id}/reject`, { reason }),
+    mutationFn: async () => riskApi.reject(currentOrganizationId!, rejectReason),
     onSuccess: (res) => {
       invalidateAll()
-      toast({ title: res.data.message || 'Risk rejected' })
+      toast({ title: res.data?.message || 'Risk Register rejected' })
       setIsRejectOpen(false)
       setRejectReason('')
     },
     onError: (err: any) => toast({ title: err.response?.data?.error?.message || 'Failed to reject', variant: 'destructive' }),
   })
 
+  const newRevisionMutation = useMutation({
+    mutationFn: async () => riskApi.newRevision(currentOrganizationId!, revisionChangeDescription, revisionVersionBump),
+    onSuccess: (res) => {
+      invalidateAll()
+      toast({ title: res.data?.message || 'New revision started' })
+      setIsNewRevisionOpen(false)
+      setRevisionChangeDescription('')
+      setRevisionVersionBump('minor')
+    },
+    onError: (err: any) => toast({ title: err.response?.data?.error?.message || 'Failed to create revision', variant: 'destructive' }),
+  })
+
+  const discardRevisionMutation = useMutation({
+    mutationFn: async () => riskApi.discardRevision(currentOrganizationId!),
+    onSuccess: (res) => {
+      invalidateAll()
+      toast({ title: res.data?.message || 'Revision discarded' })
+      setIsDiscardRevisionOpen(false)
+    },
+    onError: (err: any) => toast({ title: err.response?.data?.error?.message || 'Failed to discard', variant: 'destructive' }),
+  })
+
   const updateVersionDescriptionMutation = useMutation({
-    mutationFn: ({ riskId, versionId, changeDescription }: { riskId: string; versionId: string; changeDescription: string }) =>
-      axiosInstance.patch(`/risks/${riskId}/versions/${versionId}`, { changeDescription }),
+    mutationFn: ({ versionId, changeDescription }: { versionId: string; changeDescription: string }) =>
+      riskApi.updateVersionDescription(versionId, changeDescription),
     onSuccess: () => {
       invalidateAll()
       setEditingVersionId(null)
       toast({ title: 'Description updated' })
     },
-    onError: (err: any) => toast({ title: err.response?.data?.error?.message || 'Failed to update description', variant: 'destructive' }),
+    onError: (err: any) => toast({ title: err.response?.data?.error?.message || 'Failed to update', variant: 'destructive' }),
   })
 
   // ============================================
   // HANDLERS
   // ============================================
-
-  const resetForm = () => {
-    setFormData({
-      title: '',
-      description: '',
-      inherentProbability: 3,
-      inherentImpact: 3,
-      controlDescription: '',
-      controlsReference: '',
-      comments: '',
-      changeDescription: '',
-    })
-  }
-
-  const handleCreate = () => {
-    createMutation.mutate({
-      title: formData.title,
-      description: formData.description,
-      likelihood: formData.inherentProbability,
-      impact: formData.inherentImpact,
-      controlDescription: formData.controlDescription,
-      controlsReference: formData.controlsReference,
-      category: 'OPERATIONAL',
-    })
-  }
 
   const handleEdit = (risk: any) => {
     setSelectedRisk(risk)
@@ -425,13 +484,25 @@ export default function RisksPage() {
       controlDescription: risk.controlDescription || '',
       controlsReference: risk.controlsReference || '',
       comments: risk.comments || '',
-      changeDescription: '',
     })
+    // Parse existing controlsReference into selected control IDs
+    const refStr = risk.controlsReference || ''
+    const parsed = refStr
+      .split(',')
+      .map((s: string) => s.trim().split(' ')[0]) // "A.5.1 Policies..." → "A.5.1"
+      .filter((s: string) => s && /^A\.\d/.test(s))
+    setEditSelectedControls(parsed)
     setIsEditOpen(true)
   }
 
   const handleUpdate = () => {
     if (!selectedRisk) return
+    const controlsReference = editSelectedControls
+      .map(cid => {
+        const ctrl = availableControls.find((c: any) => c.controlId === cid)
+        return ctrl ? `${ctrl.controlId} ${ctrl.name}` : cid
+      })
+      .join(', ')
     updateMutation.mutate({
       id: selectedRisk.id,
       data: {
@@ -440,9 +511,8 @@ export default function RisksPage() {
         likelihood: formData.inherentProbability,
         impact: formData.inherentImpact,
         controlDescription: formData.controlDescription,
-        controlsReference: formData.controlsReference,
+        controlsReference,
         comments: formData.comments,
-        changeDescription: formData.changeDescription,
       },
     })
   }
@@ -453,37 +523,12 @@ export default function RisksPage() {
     }
   }
 
-  const handleSubmitForReview = (risk: any) => {
-    setSelectedRisk(risk)
-    setSubmitDescription('')
-    setSubmitVersionBump('none')
-    setIsSubmitOpen(true)
-  }
-
-  const handleApproval = (risk: any) => {
-    setSelectedRisk(risk)
-    setApprovalComments('')
-    setIsApprovalOpen(true)
-  }
-
-  const handleReject = (risk: any) => {
-    setSelectedRisk(risk)
-    setRejectReason('')
-    setIsRejectOpen(true)
-  }
-
   const submitApproval = () => {
-    if (!selectedRisk) return
-    if (selectedRisk.approvalStatus === 'PENDING_FIRST_APPROVAL') {
-      firstApprovalMutation.mutate({ id: selectedRisk.id, comments: approvalComments })
-    } else if (selectedRisk.approvalStatus === 'PENDING_SECOND_APPROVAL') {
-      secondApprovalMutation.mutate({ id: selectedRisk.id, comments: approvalComments })
+    if (riskDoc?.approvalStatus === 'PENDING_FIRST_APPROVAL') {
+      firstApprovalMutation.mutate()
+    } else if (riskDoc?.approvalStatus === 'PENDING_SECOND_APPROVAL') {
+      secondApprovalMutation.mutate()
     }
-  }
-
-  const submitRejection = () => {
-    if (!selectedRisk || !rejectReason) return
-    rejectMutation.mutate({ id: selectedRisk.id, reason: rejectReason })
   }
 
   const filteredRisks = risks?.filter((risk: any) =>
@@ -496,7 +541,32 @@ export default function RisksPage() {
     return { ...treatment, risk }
   }) || []
 
-  const pendingCount = pendingApprovals?.length || 0
+  // Document version grouping
+  const docApproval = getApprovalConfig(riskDoc?.approvalStatus || 'DRAFT')
+  const DocApprovalIcon = docApproval.icon
+
+  const groupedVersions: { version: number; entries: any[] }[] = []
+  if (docVersions) {
+    const versionMap = new Map<number, any[]>()
+    docVersions.forEach((v: any) => {
+      const key = v.version
+      if (!versionMap.has(key)) versionMap.set(key, [])
+      versionMap.get(key)!.push(v)
+    })
+    versionMap.forEach((entries, version) => {
+      groupedVersions.push({ version, entries })
+    })
+    groupedVersions.sort((a, b) => b.version - a.version)
+  }
+
+  const canDiscardRevision = useMemo(() => {
+    if (riskDoc?.approvalStatus !== 'DRAFT') return false
+    if (!docVersions || docVersions.length === 0) return false
+    const sorted = [...docVersions].sort((a: any, b: any) => b.version - a.version)
+    const latest = sorted[0]
+    if (latest.action !== 'Draft & Review') return false
+    return sorted.some((v: any) => v.version < latest.version)
+  }, [riskDoc, docVersions])
 
   if (isLoading) {
     return (
@@ -515,9 +585,6 @@ export default function RisksPage() {
           <p className="text-muted-foreground">
             ISO/IEC 27001:2022 - Organization Level Risk Register
           </p>
-          <p className="text-sm text-muted-foreground">
-            Classification: Internal | ISMS-R-004 | Date: {formatDate(new Date())}
-          </p>
         </div>
         <Button onClick={() => navigate('/risks/new')}>
           <Plus className="mr-2 h-4 w-4" />
@@ -525,22 +592,83 @@ export default function RisksPage() {
         </Button>
       </div>
 
-      {/* Approval Summary Banner */}
-      {canApprove && pendingCount > 0 && (
-        <Card className="border-amber-300 bg-amber-50">
-          <CardContent className="py-3 px-4 flex items-center gap-3">
-            <AlertTriangle className="h-5 w-5 text-amber-600" />
-            <span className="text-sm font-medium text-amber-800">
-              {pendingCount} risk{pendingCount > 1 ? 's' : ''} pending your approval
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="ml-auto"
-              onClick={() => setActiveTab('approvals')}
-            >
-              Review Now
-            </Button>
+      {/* Document Info Bar */}
+      {riskDoc && (
+        <Card className="border-l-4 border-l-primary">
+          <CardContent className="py-4">
+            <div className="flex flex-wrap items-start gap-x-8 gap-y-4">
+              <div className="flex items-start gap-2">
+                <FileText className="h-4 w-4 text-muted-foreground mt-0.5" />
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Identification</p>
+                  <p className="text-sm font-mono font-semibold mt-1.5">{riskDoc.identification}</p>
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Version</p>
+                <p className="text-sm font-mono font-bold mt-1.5">{riskDoc.version?.toFixed(1)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Status</p>
+                <Badge className={cn('text-xs mt-1.5', docApproval.color)}>
+                  <DocApprovalIcon className="mr-1 h-3 w-3" />
+                  {docApproval.label}
+                </Badge>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Reviewer (1st Level)</p>
+                <div className="flex items-center gap-2 mt-1.5">
+                  {riskDoc.reviewer ? (
+                    <>
+                      <Avatar className="h-6 w-6">
+                        <AvatarImage src={riskDoc.reviewer.avatar} />
+                        <AvatarFallback className="text-[10px]">
+                          {riskDoc.reviewer.firstName?.[0]}{riskDoc.reviewer.lastName?.[0]}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className="text-sm">{riskDoc.reviewer.firstName} {riskDoc.reviewer.lastName}</span>
+                      {riskDoc.reviewer.designation && <span className="text-xs text-muted-foreground">({riskDoc.reviewer.designation})</span>}
+                    </>
+                  ) : (
+                    <span className="text-sm text-muted-foreground italic">Not assigned</span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Approver (2nd Level)</p>
+                <div className="flex items-center gap-2 mt-1.5">
+                  {riskDoc.approver ? (
+                    <>
+                      <Avatar className="h-6 w-6">
+                        <AvatarImage src={riskDoc.approver.avatar} />
+                        <AvatarFallback className="text-[10px]">
+                          {riskDoc.approver.firstName?.[0]}{riskDoc.approver.lastName?.[0]}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className="text-sm">{riskDoc.approver.firstName} {riskDoc.approver.lastName}</span>
+                      {riskDoc.approver.designation && <span className="text-xs text-muted-foreground">({riskDoc.approver.designation})</span>}
+                    </>
+                  ) : (
+                    <span className="text-sm text-muted-foreground italic">Not assigned</span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Classification</p>
+                <Badge variant="outline" className={cn('text-xs mt-1.5',
+                  riskDoc.classification === 'Confidential' ? 'bg-red-50 text-red-700 border-red-200' :
+                  riskDoc.classification === 'Internal' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                  riskDoc.classification === 'Public' ? 'bg-green-50 text-green-700 border-green-200' :
+                  'bg-gray-50 text-gray-700 border-gray-200'
+                )}>
+                  {riskDoc.classification}
+                </Badge>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Last Updated</p>
+                <p className="text-sm mt-1.5">{formatDate(riskDoc.updatedAt)}</p>
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -550,14 +678,7 @@ export default function RisksPage() {
         <TabsList>
           <TabsTrigger value="register">Risk Assessment</TabsTrigger>
           <TabsTrigger value="treatment">Treatment Plan</TabsTrigger>
-          <TabsTrigger value="approvals" className="relative">
-            Review & Approval
-            {pendingCount > 0 && (
-              <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-amber-500 text-white text-xs w-5 h-5">
-                {pendingCount}
-              </span>
-            )}
-          </TabsTrigger>
+          <TabsTrigger value="approvals">Review & Approval</TabsTrigger>
           <TabsTrigger value="versions">Version History</TabsTrigger>
           <TabsTrigger value="retirement">Retired Risks</TabsTrigger>
         </TabsList>
@@ -611,17 +732,9 @@ export default function RisksPage() {
                   <table className="w-full text-sm border-collapse" style={{ minWidth: '900px' }}>
                     <thead>
                       <tr className="border-b bg-muted/50">
-                        {/* Frozen: Risk ID */}
-                        <th className="sticky left-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[90px] border-r">
-                          Risk ID
-                        </th>
-                        {/* Frozen: Risk Item */}
-                        <th className="sticky left-[90px] z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[200px] border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                          Risk Item
-                        </th>
+                        <th className="sticky left-0 z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[90px] border-r">Risk ID</th>
+                        <th className="sticky left-[90px] z-20 bg-muted/95 backdrop-blur px-3 py-3 text-left font-medium w-[200px] border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Risk Item</th>
                         {visibleColumns.owner && <th className="px-3 py-3 text-left font-medium">Owner</th>}
-                        {visibleColumns.version && <th className="px-3 py-3 text-left font-medium w-[80px]">Version</th>}
-                        {visibleColumns.approval && <th className="px-3 py-3 text-left font-medium w-[140px]">Approval</th>}
                         {visibleColumns.inherentProb && <th className="px-3 py-3 text-left font-medium">Inherent Prob.</th>}
                         {visibleColumns.inherentImpact && <th className="px-3 py-3 text-left font-medium">Inherent Impact</th>}
                         {visibleColumns.inherentRisk && <th className="px-3 py-3 text-left font-medium">Inherent Risk</th>}
@@ -636,11 +749,7 @@ export default function RisksPage() {
                     </thead>
                     <tbody>
                       {filteredRisks.length === 0 ? (
-                        <tr>
-                          <td colSpan={15} className="text-center text-muted-foreground py-8">
-                            No risks found
-                          </td>
-                        </tr>
+                        <tr><td colSpan={15} className="text-center text-muted-foreground py-8">No risks found</td></tr>
                       ) : (
                         filteredRisks.map((risk: any) => {
                           const inherentScore = risk.inherentRisk || (risk.likelihood * risk.impact)
@@ -651,172 +760,34 @@ export default function RisksPage() {
                           const inherentImp = getImpactLabel(risk.impact)
                           const residualProb = risk.residualProbability ? getProbabilityLabel(risk.residualProbability) : null
                           const residualImp = risk.residualImpact ? getImpactLabel(risk.residualImpact) : null
-                          const approval = getApprovalConfig(risk.approvalStatus)
 
                           return (
                             <tr key={risk.id} className="border-b hover:bg-muted/30 transition-colors">
-                              {/* Frozen: Risk ID */}
-                              <td className="sticky left-0 z-10 bg-background px-3 py-2.5 font-mono text-xs font-semibold border-r">
-                                {risk.riskId}
-                              </td>
-                              {/* Frozen: Risk Item */}
+                              <td className="sticky left-0 z-10 bg-background px-3 py-2.5 font-mono text-xs font-semibold border-r">{risk.riskId}</td>
                               <td className="sticky left-[90px] z-10 bg-background px-3 py-2.5 border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                                 <span className="font-medium text-sm line-clamp-2">{risk.title}</span>
                               </td>
-                              {visibleColumns.owner && (
-                                <td className="px-3 py-2.5 text-sm">
-                                  {risk.owner ? `${risk.owner.firstName} ${risk.owner.lastName}` : '-'}
-                                </td>
-                              )}
-                              {visibleColumns.version && (
-                                <td className="px-3 py-2.5">
-                                  <span className="font-mono text-xs">{risk.version?.toFixed(1) || '0.1'}</span>
-                                </td>
-                              )}
-                              {visibleColumns.approval && (
-                                <td className="px-3 py-2.5">
-                                  <Badge className={cn('text-xs', approval.color)}>
-                                    {approval.label}
-                                  </Badge>
-                                </td>
-                              )}
-                              {visibleColumns.inherentProb && (
-                                <td className="px-3 py-2.5">
-                                  <Badge className={cn('font-medium', inherentProb.color)}>
-                                    {inherentProb.label}
-                                  </Badge>
-                                </td>
-                              )}
-                              {visibleColumns.inherentImpact && (
-                                <td className="px-3 py-2.5">
-                                  <Badge className={cn('font-medium', inherentImp.color)}>
-                                    {inherentImp.label}
-                                  </Badge>
-                                </td>
-                              )}
-                              {visibleColumns.inherentRisk && (
-                                <td className="px-3 py-2.5">
-                                  <Badge className={inherentLevel.color}>
-                                    {inherentLevel.label} ({inherentScore})
-                                  </Badge>
-                                </td>
-                              )}
-                              {visibleColumns.treatment && (
-                                <td className="px-3 py-2.5">
-                                  {risk.treatment && risk.treatment !== 'PENDING' ? (
-                                    <Badge variant="outline">{risk.treatment}</Badge>
-                                  ) : '-'}
-                                </td>
-                              )}
-                              {visibleColumns.controlDesc && (
-                                <td className="px-3 py-2.5 max-w-[200px]">
-                                  <span className="text-xs text-muted-foreground line-clamp-2">
-                                    {risk.controlDescription || risk.treatmentPlan || '-'}
-                                  </span>
-                                </td>
-                              )}
-                              {visibleColumns.residualProb && (
-                                <td className="px-3 py-2.5">
-                                  {residualProb ? (
-                                    <Badge className={cn('font-medium', residualProb.color)}>
-                                      {residualProb.label}
-                                    </Badge>
-                                  ) : '-'}
-                                </td>
-                              )}
-                              {visibleColumns.residualImpact && (
-                                <td className="px-3 py-2.5">
-                                  {residualImp ? (
-                                    <Badge className={cn('font-medium', residualImp.color)}>
-                                      {residualImp.label}
-                                    </Badge>
-                                  ) : '-'}
-                                </td>
-                              )}
-                              {visibleColumns.residualRisk && (
-                                <td className="px-3 py-2.5">
-                                  {residualScore > 0 ? (
-                                    <Badge className={residualLevel.color}>
-                                      {residualLevel.label} ({residualScore})
-                                    </Badge>
-                                  ) : '-'}
-                                </td>
-                              )}
-                              {visibleColumns.lastReviewed && (
-                                <td className="px-3 py-2.5 text-sm">
-                                  {risk.reviewedAt ? formatDate(risk.reviewedAt) : '-'}
-                                </td>
-                              )}
+                              {visibleColumns.owner && <td className="px-3 py-2.5 text-sm">{risk.owner ? `${risk.owner.firstName} ${risk.owner.lastName}` : '-'}</td>}
+                              {visibleColumns.inherentProb && <td className="px-3 py-2.5"><Badge className={cn('font-medium', inherentProb.color)}>{inherentProb.label}</Badge></td>}
+                              {visibleColumns.inherentImpact && <td className="px-3 py-2.5"><Badge className={cn('font-medium', inherentImp.color)}>{inherentImp.label}</Badge></td>}
+                              {visibleColumns.inherentRisk && <td className="px-3 py-2.5"><Badge className={inherentLevel.color}>{inherentLevel.label} ({inherentScore})</Badge></td>}
+                              {visibleColumns.treatment && <td className="px-3 py-2.5">{risk.treatment && risk.treatment !== 'PENDING' ? <Badge variant="outline">{risk.treatment}</Badge> : '-'}</td>}
+                              {visibleColumns.controlDesc && <td className="px-3 py-2.5 max-w-[200px]"><span className="text-xs text-muted-foreground line-clamp-2">{risk.controlDescription || risk.treatmentPlan || '-'}</span></td>}
+                              {visibleColumns.residualProb && <td className="px-3 py-2.5">{residualProb ? <Badge className={cn('font-medium', residualProb.color)}>{residualProb.label}</Badge> : '-'}</td>}
+                              {visibleColumns.residualImpact && <td className="px-3 py-2.5">{residualImp ? <Badge className={cn('font-medium', residualImp.color)}>{residualImp.label}</Badge> : '-'}</td>}
+                              {visibleColumns.residualRisk && <td className="px-3 py-2.5">{residualScore > 0 ? <Badge className={residualLevel.color}>{residualLevel.label} ({residualScore})</Badge> : '-'}</td>}
+                              {visibleColumns.lastReviewed && <td className="px-3 py-2.5 text-sm">{risk.reviewedAt ? formatDate(risk.reviewedAt) : '-'}</td>}
                               <td className="px-3 py-2.5 text-right">
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
-                                      <MoreHorizontal className="h-4 w-4" />
-                                    </Button>
+                                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0"><MoreHorizontal className="h-4 w-4" /></Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={() => handleEdit(risk)}>
-                                      <Pencil className="mr-2 h-4 w-4" />
-                                      Edit
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => {
-                                      setSelectedRisk(risk)
-                                      setIsTreatmentOpen(true)
-                                    }}>
-                                      <ShieldCheck className="mr-2 h-4 w-4" />
-                                      Add Treatment
-                                    </DropdownMenuItem>
-
+                                    <DropdownMenuItem onClick={() => handleEdit(risk)}><Pencil className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => { setSelectedRisk(risk); setTreatmentSelectedControls([]); setTreatmentData({ residualProbability: 3, residualImpact: 3, riskResponse: 'MITIGATE', controlDescription: '', controlImplementationDate: '', comments: '' }); setIsTreatmentOpen(true) }}><ShieldCheck className="mr-2 h-4 w-4" />Add Treatment</DropdownMenuItem>
                                     <DropdownMenuSeparator />
-
-                                    {(risk.approvalStatus === 'DRAFT' || risk.approvalStatus === 'REJECTED') && (
-                                      <DropdownMenuItem onClick={() => handleSubmitForReview(risk)}>
-                                        <SendHorizontal className="mr-2 h-4 w-4" />
-                                        Submit for Review
-                                      </DropdownMenuItem>
-                                    )}
-                                    {risk.approvalStatus === 'PENDING_FIRST_APPROVAL' && canApproveFirst && (
-                                      <DropdownMenuItem onClick={() => handleApproval(risk)}>
-                                        <CheckCircle2 className="mr-2 h-4 w-4 text-green-600" />
-                                        1st Level Approve
-                                      </DropdownMenuItem>
-                                    )}
-                                    {risk.approvalStatus === 'PENDING_SECOND_APPROVAL' && canApproveSecond && (
-                                      <DropdownMenuItem onClick={() => handleApproval(risk)}>
-                                        <FileCheck className="mr-2 h-4 w-4 text-green-600" />
-                                        2nd Level Approve
-                                      </DropdownMenuItem>
-                                    )}
-                                    {['PENDING_FIRST_APPROVAL', 'PENDING_SECOND_APPROVAL'].includes(risk.approvalStatus) && canApprove && (
-                                      <DropdownMenuItem onClick={() => handleReject(risk)}>
-                                        <XCircle className="mr-2 h-4 w-4 text-red-600" />
-                                        Reject
-                                      </DropdownMenuItem>
-                                    )}
-
-                                    <DropdownMenuSeparator />
-
-                                    <DropdownMenuItem onClick={() => {
-                                      setSelectedRisk(risk)
-                                      setIsVersionHistoryOpen(true)
-                                    }}>
-                                      <History className="mr-2 h-4 w-4" />
-                                      Version History
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => {
-                                      setSelectedRisk(risk)
-                                      setIsRetireOpen(true)
-                                    }}>
-                                      <Archive className="mr-2 h-4 w-4" />
-                                      Retire Risk
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      onClick={() => handleDelete(risk.id)}
-                                      className="text-destructive"
-                                    >
-                                      <Trash2 className="mr-2 h-4 w-4" />
-                                      Delete
-                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => { setSelectedRisk(risk); setIsRetireOpen(true) }}><Archive className="mr-2 h-4 w-4" />Retire Risk</DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleDelete(risk.id)} className="text-destructive"><Trash2 className="mr-2 h-4 w-4" />Delete</DropdownMenuItem>
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               </td>
@@ -861,11 +832,7 @@ export default function RisksPage() {
                 </TableHeader>
                 <TableBody>
                   {filteredTreatments.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={12} className="text-center text-muted-foreground">
-                        No treatments found. Select a risk to view its treatments.
-                      </TableCell>
-                    </TableRow>
+                    <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground">No treatments found. Select a risk to view its treatments.</TableCell></TableRow>
                   ) : (
                     filteredTreatments.map((treatment: any, index: number) => {
                       const residualLevel = getRiskLevel(treatment.residualRisk)
@@ -874,24 +841,12 @@ export default function RisksPage() {
                           <TableCell>{index + 1}</TableCell>
                           <TableCell className="font-medium">{treatment.risk?.riskId}</TableCell>
                           <TableCell>{treatment.risk?.title}</TableCell>
-                          <TableCell>
-                            {treatment.risk?.owner ? `${treatment.risk.owner.firstName} ${treatment.risk.owner.lastName}` : '-'}
-                          </TableCell>
-                          <TableCell className="max-w-[200px] text-sm">
-                            {treatment.risk?.description}
-                          </TableCell>
+                          <TableCell>{treatment.risk?.owner ? `${treatment.risk.owner.firstName} ${treatment.risk.owner.lastName}` : '-'}</TableCell>
+                          <TableCell className="max-w-[200px] text-sm">{treatment.risk?.description}</TableCell>
                           <TableCell>{treatment.risk?.createdAt ? formatDate(treatment.risk.createdAt) : '-'}</TableCell>
-                          <TableCell>
-                            <Badge className={residualLevel.color}>
-                              {residualLevel.label} ({treatment.residualRisk})
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{treatment.riskResponse}</Badge>
-                          </TableCell>
-                          <TableCell className="max-w-[200px] text-sm">
-                            {treatment.controlDescription}
-                          </TableCell>
+                          <TableCell><Badge className={residualLevel.color}>{residualLevel.label} ({treatment.residualRisk})</Badge></TableCell>
+                          <TableCell><Badge variant="outline">{treatment.riskResponse}</Badge></TableCell>
+                          <TableCell className="max-w-[200px] text-sm">{treatment.controlDescription}</TableCell>
                           <TableCell>{treatment.controlImplementationDate ? formatDate(treatment.controlImplementationDate) : '-'}</TableCell>
                           <TableCell className="max-w-[200px] text-sm">{treatment.comments}</TableCell>
                           <TableCell>{treatment.treatmentTimeInDays}</TableCell>
@@ -911,87 +866,131 @@ export default function RisksPage() {
         <TabsContent value="approvals" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Review & Approval Queue</CardTitle>
+              <CardTitle>Review & Approval</CardTitle>
               <CardDescription>
-                Two-level approval workflow: 1st Level (COO/Local Admin) then 2nd Level (CEO/Admin)
+                Two-level document approval workflow: 1st Level (Reviewer) then 2nd Level (Approver)
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              {!pendingApprovals || pendingApprovals.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  <CheckCircle2 className="mx-auto h-12 w-12 mb-3 text-green-500" />
-                  <p className="text-lg font-medium">All caught up!</p>
-                  <p className="text-sm">No risks pending approval at this time.</p>
+            <CardContent className="space-y-6">
+              {/* Current Status */}
+              <div className="flex items-center gap-4 p-4 rounded-lg bg-muted/30 border">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase">Current Status</p>
+                  <Badge className={cn('text-sm mt-1', docApproval.color)}>
+                    <DocApprovalIcon className="mr-1.5 h-3.5 w-3.5" />
+                    {docApproval.label}
+                  </Badge>
                 </div>
-              ) : (
-                <div className="space-y-4">
-                  {pendingApprovals.map((risk: any) => {
-                    const approval = getApprovalConfig(risk.approvalStatus)
-                    const inherentScore = risk.inherentRisk || (risk.likelihood * risk.impact)
-                    const inherentLevel = getRiskLevel(inherentScore)
-                    const residualScore = risk.residualRisk || 0
+                <div className="border-l pl-4">
+                  <p className="text-xs font-medium text-muted-foreground uppercase">Version</p>
+                  <p className="text-lg font-mono font-bold mt-0.5">{riskDoc?.version?.toFixed(1)}</p>
+                </div>
+              </div>
 
+              {/* Reviewer / Approver Assignment */}
+              {canEdit && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label>Reviewer (1st Level Approval)</Label>
+                    <Select
+                      value={riskDoc?.reviewerId || 'none'}
+                      onValueChange={(v) => updateDocMutation.mutate({ reviewerId: v === 'none' ? null : v })}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Select reviewer" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Not assigned</SelectItem>
+                        {orgMembers?.map((m: any) => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.firstName} {m.lastName} ({m.role}){m.designation ? ` - ${m.designation}` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>Approver (2nd Level Approval)</Label>
+                    <Select
+                      value={riskDoc?.approverId || 'none'}
+                      onValueChange={(v) => updateDocMutation.mutate({ approverId: v === 'none' ? null : v })}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Select approver" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Not assigned</SelectItem>
+                        {orgMembers?.map((m: any) => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.firstName} {m.lastName} ({m.role}){m.designation ? ` - ${m.designation}` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap gap-3">
+                {canEdit && (riskDoc?.approvalStatus === 'DRAFT' || riskDoc?.approvalStatus === 'REJECTED') && (
+                  <Button onClick={() => setIsSubmitOpen(true)}>
+                    <SendHorizontal className="mr-2 h-4 w-4" />
+                    Submit for Review
+                  </Button>
+                )}
+
+                {(isGlobalAdmin || user?.id === riskDoc?.reviewerId) && riskDoc?.approvalStatus === 'PENDING_FIRST_APPROVAL' && (
+                  <Button className="bg-green-600 hover:bg-green-700" onClick={() => setIsApprovalOpen(true)}>
+                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                    Approve (1st Level)
+                  </Button>
+                )}
+
+                {(isGlobalAdmin || user?.id === riskDoc?.approverId) && riskDoc?.approvalStatus === 'PENDING_SECOND_APPROVAL' && (
+                  <Button className="bg-green-600 hover:bg-green-700" onClick={() => setIsApprovalOpen(true)}>
+                    <FileCheck className="mr-2 h-4 w-4" />
+                    Approve (2nd Level - Final)
+                  </Button>
+                )}
+
+                {(riskDoc?.approvalStatus === 'PENDING_FIRST_APPROVAL' || riskDoc?.approvalStatus === 'PENDING_SECOND_APPROVAL') &&
+                  (isGlobalAdmin || user?.id === riskDoc?.reviewerId || user?.id === riskDoc?.approverId) && (
+                  <Button variant="destructive" onClick={() => setIsRejectOpen(true)}>
+                    <XCircle className="mr-2 h-4 w-4" />
+                    Reject
+                  </Button>
+                )}
+
+                {canEdit && riskDoc?.approvalStatus === 'APPROVED' && (
+                  <Button onClick={() => setIsNewRevisionOpen(true)}>
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Create New Revision
+                  </Button>
+                )}
+
+                {canEdit && canDiscardRevision && (
+                  <Button variant="destructive" onClick={() => setIsDiscardRevisionOpen(true)}>
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Discard Revision
+                  </Button>
+                )}
+              </div>
+
+              {/* Workflow Diagram */}
+              <div className="rounded-lg border p-4 bg-muted/20">
+                <p className="text-xs font-medium text-muted-foreground mb-3 uppercase">Approval Workflow</p>
+                <div className="flex items-center gap-2 text-xs flex-wrap">
+                  {['DRAFT', 'PENDING_FIRST_APPROVAL', 'PENDING_SECOND_APPROVAL', 'APPROVED'].map((step, i) => {
+                    const config = getApprovalConfig(step)
+                    const isActive = riskDoc?.approvalStatus === step
                     return (
-                      <Card key={risk.id} className="border-l-4 border-l-amber-400">
-                        <CardContent className="py-4">
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex-1 space-y-2">
-                              <div className="flex items-center gap-3">
-                                <span className="font-mono font-bold text-sm">{risk.riskId}</span>
-                                <Badge className={cn('text-xs', approval.color)}>
-                                  {approval.label}
-                                </Badge>
-                                <Badge className={inherentLevel.color}>
-                                  Inherent: {inherentLevel.label} ({inherentScore})
-                                </Badge>
-                                {residualScore > 0 && (
-                                  <Badge className={getRiskLevel(residualScore).color}>
-                                    Residual: {getRiskLevel(residualScore).label} ({residualScore})
-                                  </Badge>
-                                )}
-                                <span className="text-xs text-muted-foreground font-mono">v{risk.version?.toFixed(1)}</span>
-                              </div>
-                              <h4 className="font-semibold">{risk.title}</h4>
-                              <p className="text-sm text-muted-foreground line-clamp-2">{risk.description}</p>
-                              <div className="flex gap-4 text-xs text-muted-foreground">
-                                <span>Owner: {risk.owner ? `${risk.owner.firstName} ${risk.owner.lastName}` : 'Unassigned'}</span>
-                                <span>Created by: {risk.createdBy ? `${risk.createdBy.firstName} ${risk.createdBy.lastName}` : '-'}</span>
-                                <span>Updated: {formatDate(risk.updatedAt)}</span>
-                              </div>
-                            </div>
-                            <div className="flex gap-2 shrink-0">
-                              {risk.approvalStatus === 'PENDING_FIRST_APPROVAL' && canApproveFirst && (
-                                <Button size="sm" onClick={() => handleApproval(risk)} className="bg-green-600 hover:bg-green-700">
-                                  <CheckCircle2 className="mr-1.5 h-4 w-4" />
-                                  1st Approve
-                                </Button>
-                              )}
-                              {risk.approvalStatus === 'PENDING_SECOND_APPROVAL' && canApproveSecond && (
-                                <Button size="sm" onClick={() => handleApproval(risk)} className="bg-green-600 hover:bg-green-700">
-                                  <FileCheck className="mr-1.5 h-4 w-4" />
-                                  2nd Approve
-                                </Button>
-                              )}
-                              {canApprove && (
-                                <Button size="sm" variant="destructive" onClick={() => handleReject(risk)}>
-                                  <XCircle className="mr-1.5 h-4 w-4" />
-                                  Reject
-                                </Button>
-                              )}
-                              <Button size="sm" variant="outline" onClick={() => {
-                                setSelectedRisk(risk)
-                                setIsVersionHistoryOpen(true)
-                              }}>
-                                <History className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
+                      <div key={step} className="flex items-center gap-2">
+                        {i > 0 && <span className="text-muted-foreground">→</span>}
+                        <Badge className={cn('text-xs', isActive ? config.color : 'bg-muted text-muted-foreground')}>
+                          {config.label}
+                        </Badge>
+                      </div>
                     )
                   })}
                 </div>
-              )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1003,124 +1002,85 @@ export default function RisksPage() {
           <Card>
             <CardHeader>
               <CardTitle>Version History</CardTitle>
-              <CardDescription>
-                Document version control and approval trail. Select a risk to view its history.
-              </CardDescription>
+              <CardDescription>Document version control and approval trail for the Risk Register</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="mb-4">
-                <Select
-                  value={selectedRisk?.id || ''}
-                  onValueChange={(value) => {
-                    const risk = risks?.find((r: any) => r.id === value)
-                    setSelectedRisk(risk)
-                    setIsVersionHistoryOpen(true) // trigger version fetch
-                  }}
-                >
-                  <SelectTrigger className="max-w-md">
-                    <SelectValue placeholder="Select a risk to view version history" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {risks?.map((risk: any) => (
-                      <SelectItem key={risk.id} value={risk.id}>
-                        {risk.riskId} - {risk.title}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {selectedRisk && isVersionHistoryOpen ? (
+              {groupedVersions.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Clock className="mx-auto h-12 w-12 mb-3" />
+                  <p>No version history available yet</p>
+                </div>
+              ) : (
                 <div className="overflow-x-auto">
-                  <Table className="min-w-[800px] text-sm">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-[80px]">Version</TableHead>
-                        <TableHead className="w-[120px]">Date</TableHead>
-                        <TableHead>Description of Change</TableHead>
-                        <TableHead>Actor</TableHead>
-                        <TableHead>Action</TableHead>
-                        <TableHead>Designation</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {!versions || versions.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={6} className="text-center text-muted-foreground">
-                            No version history available
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        versions.map((version: any) => {
-                          const isApproval = version.action?.includes('Approval')
-                          const isRejection = version.action === 'Rejected'
-                          const isMajor = version.version === Math.floor(version.version)
-
-                          return (
-                            <TableRow key={version.id} className={cn(
-                              isMajor && 'bg-green-50',
-                              isRejection && 'bg-red-50'
-                            )}>
-                              <TableCell className="font-mono font-bold">
-                                {version.version.toFixed(1)}
-                              </TableCell>
-                              <TableCell>{formatDate(version.createdAt)}</TableCell>
-                              <TableCell className="max-w-[300px]">
-                                {editingVersionId === version.id ? (
-                                  <div className="flex items-center gap-2">
-                                    <Input
-                                      value={editingDescription}
-                                      onChange={(e) => setEditingDescription(e.target.value)}
-                                      className="h-8 text-sm"
-                                      autoFocus
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter' && selectedRisk) updateVersionDescriptionMutation.mutate({ riskId: selectedRisk.id, versionId: version.id, changeDescription: editingDescription })
-                                        if (e.key === 'Escape') setEditingVersionId(null)
-                                      }}
-                                    />
-                                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => selectedRisk && updateVersionDescriptionMutation.mutate({ riskId: selectedRisk.id, versionId: version.id, changeDescription: editingDescription })} disabled={!editingDescription.trim()}>
-                                      <Save className="h-3.5 w-3.5" />
-                                    </Button>
-                                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditingVersionId(null)}>
-                                      <X className="h-3.5 w-3.5" />
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <div className="flex items-center gap-2 group">
-                                    <span>{version.changeDescription}</span>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-blue-600 text-white">
+                        <th className="px-4 py-3 text-left w-[120px]">Version Number</th>
+                        <th className="px-4 py-3 text-left w-[120px]">Date</th>
+                        <th className="px-4 py-3 text-left">Description of Change</th>
+                        <th className="px-4 py-3 text-left w-[180px]">Actor</th>
+                        <th className="px-4 py-3 text-left w-[160px]">Action</th>
+                        <th className="px-4 py-3 text-left w-[140px]">Designation</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groupedVersions.map((group) => (
+                        group.entries.map((v: any, idx: number) => (
+                          <tr key={v.id} className="border-b hover:bg-muted/30">
+                            {idx === 0 ? (
+                              <td className="px-4 py-3 font-mono font-bold" rowSpan={group.entries.length}>
+                                {group.version.toFixed(1)}
+                              </td>
+                            ) : null}
+                            <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                              {formatDate(v.createdAt)}
+                            </td>
+                            <td className="px-4 py-3">
+                              {editingVersionId === v.id ? (
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    value={editingDescription}
+                                    onChange={(e) => setEditingDescription(e.target.value)}
+                                    className="h-8 text-sm"
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') updateVersionDescriptionMutation.mutate({ versionId: v.id, changeDescription: editingDescription })
+                                      if (e.key === 'Escape') setEditingVersionId(null)
+                                    }}
+                                  />
+                                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => updateVersionDescriptionMutation.mutate({ versionId: v.id, changeDescription: editingDescription })} disabled={!editingDescription.trim()}>
+                                    <Save className="h-3.5 w-3.5" />
+                                  </Button>
+                                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditingVersionId(null)}>
+                                    <X className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2 group">
+                                  <span>{v.changeDescription}</span>
+                                  {canEdit && (
                                     <button
                                       className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-muted"
-                                      onClick={() => { setEditingVersionId(version.id); setEditingDescription(version.changeDescription) }}
+                                      onClick={() => { setEditingVersionId(v.id); setEditingDescription(v.changeDescription) }}
                                     >
                                       <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
                                     </button>
-                                  </div>
-                                )}
-                              </TableCell>
-                              <TableCell>{version.actor}</TableCell>
-                              <TableCell>
-                                <Badge
-                                  variant="outline"
-                                  className={cn(
-                                    isApproval && 'border-green-500 text-green-700',
-                                    isRejection && 'border-red-500 text-red-700'
                                   )}
-                                >
-                                  {version.action}
-                                </Badge>
-                              </TableCell>
-                              <TableCell>{version.actorDesignation || '-'}</TableCell>
-                            </TableRow>
-                          )
-                        })
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              ) : (
-                <div className="text-center py-12 text-muted-foreground">
-                  <History className="mx-auto h-12 w-12 mb-3" />
-                  <p>Select a risk above to view its version history</p>
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 font-medium">{v.actor}</td>
+                            <td className="px-4 py-3">
+                              <Badge className={cn('text-xs', VERSION_ACTION_COLORS[v.action] || 'bg-gray-100 text-gray-800')}>
+                                {v.action}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-3 text-muted-foreground">{v.actorDesignation || '-'}</td>
+                          </tr>
+                        ))
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </CardContent>
@@ -1152,27 +1112,17 @@ export default function RisksPage() {
                 </TableHeader>
                 <TableBody>
                   {!retiredRisks || retiredRisks.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={8} className="text-center text-muted-foreground">
-                        No retired risks found
-                      </TableCell>
-                    </TableRow>
+                    <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground">No retired risks found</TableCell></TableRow>
                   ) : (
                     retiredRisks.map((retired: any, index: number) => (
                       <TableRow key={retired.id}>
                         <TableCell>{index + 1}</TableCell>
                         <TableCell className="font-medium">{retired.risk.riskId}</TableCell>
                         <TableCell>{retired.risk.title}</TableCell>
-                        <TableCell>
-                          {retired.risk.owner ? `${retired.risk.owner.firstName} ${retired.risk.owner.lastName}` : '-'}
-                        </TableCell>
-                        <TableCell className="max-w-[200px] text-sm">
-                          {retired.risk.description}
-                        </TableCell>
+                        <TableCell>{retired.risk.owner ? `${retired.risk.owner.firstName} ${retired.risk.owner.lastName}` : '-'}</TableCell>
+                        <TableCell className="max-w-[200px] text-sm">{retired.risk.description}</TableCell>
                         <TableCell>{formatDate(retired.retiredAt)}</TableCell>
-                        <TableCell>
-                          {retired.retiredBy ? `${retired.retiredBy.firstName} ${retired.retiredBy.lastName}` : '-'}
-                        </TableCell>
+                        <TableCell>{retired.retiredBy ? `${retired.retiredBy.firstName} ${retired.retiredBy.lastName}` : '-'}</TableCell>
                         <TableCell className="max-w-[200px] text-sm">{retired.reason}</TableCell>
                       </TableRow>
                     ))
@@ -1190,214 +1140,802 @@ export default function RisksPage() {
 
       {/* Edit Risk Dialog */}
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="sm:max-w-[900px] w-full mx-2 max-h-[85vh]">
-          <DialogHeader>
-            <DialogTitle>Edit Risk - {selectedRisk?.riskId}</DialogTitle>
-            <DialogDescription>
-              Update risk information. Changes will create a new version entry.
-              {selectedRisk?.approvalStatus === 'APPROVED' && (
-                <span className="block text-amber-600 mt-1">
-                  Note: Editing an approved risk will reset its approval status back to Draft.
-                </span>
+        <DialogContent className="sm:max-w-[900px] w-full mx-2 max-h-[90vh] p-0 gap-0 overflow-hidden">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-white/10 rounded-lg p-2">
+                <Pencil className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <DialogTitle className="text-white text-lg">Edit Risk — {selectedRisk?.riskId}</DialogTitle>
+                <DialogDescription className="text-slate-300 text-xs mt-0.5">
+                  Update risk assessment details. Changes will create a new version requiring re-approval.
+                </DialogDescription>
+              </div>
+              {selectedRisk && (
+                <Badge className={cn('ml-auto text-xs', getRiskLevel(selectedRisk.inherentRisk || 0).color)}>
+                  {getRiskLevel(selectedRisk.inherentRisk || 0).label} ({selectedRisk.inherentRisk || 0})
+                </Badge>
               )}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4 overflow-auto max-h-[65vh]">
-            <div className="grid gap-2">
-              <Label>Risk Item</Label>
-              <Input
-                value={formData.title}
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Risk Description</Label>
-              <Textarea
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                rows={3}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label>Inherent Probability</Label>
-                <Select
-                  value={formData.inherentProbability.toString()}
-                  onValueChange={(value) => setFormData({ ...formData, inherentProbability: parseInt(value) })}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {PROBABILITY_LABELS.map((prob) => (
-                      <SelectItem key={prob.value} value={prob.value.toString()}>
-                        {prob.value} - {prob.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label>Inherent Impact</Label>
-                <Select
-                  value={formData.inherentImpact.toString()}
-                  onValueChange={(value) => setFormData({ ...formData, inherentImpact: parseInt(value) })}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {IMPACT_LABELS.map((impact) => (
-                      <SelectItem key={impact.value} value={impact.value.toString()}>
-                        {impact.value} - {impact.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid gap-2">
-              <Label>Control Description</Label>
-              <Textarea
-                value={formData.controlDescription}
-                onChange={(e) => setFormData({ ...formData, controlDescription: e.target.value })}
-                rows={2}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Control Reference (ISO 27001 Annex A)</Label>
-              <Input
-                value={formData.controlsReference}
-                onChange={(e) => setFormData({ ...formData, controlsReference: e.target.value })}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Comments</Label>
-              <Textarea
-                value={formData.comments}
-                onChange={(e) => setFormData({ ...formData, comments: e.target.value })}
-                rows={2}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Change Description (for version history)</Label>
-              <Input
-                value={formData.changeDescription}
-                onChange={(e) => setFormData({ ...formData, changeDescription: e.target.value })}
-                placeholder="e.g., Updated risk scoring after re-assessment"
-              />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditOpen(false)}>Cancel</Button>
-            <Button onClick={handleUpdate} disabled={updateMutation.isPending}>
-              {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Update Risk
-            </Button>
-          </DialogFooter>
+
+          {/* Scrollable Body */}
+          <div className="overflow-auto max-h-[calc(90vh-160px)] px-6 py-5 space-y-5">
+
+            {/* Section 1: Risk Identification */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 pb-1 border-b">
+                <Target className="h-4 w-4 text-slate-600" />
+                <h3 className="text-sm font-semibold text-slate-700">Risk Identification</h3>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium flex items-center gap-1.5">
+                  <Shield className="h-3.5 w-3.5 text-muted-foreground" />
+                  Risk Title <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  value={formData.title}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                  className="h-10"
+                  placeholder="e.g., Unauthorized Data Access via Compromised Credentials"
+                />
+                <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                  <Info className="h-3 w-3 mt-0.5 shrink-0 text-blue-400" />
+                  Concise title identifying the threat source, vulnerability, and potential impact.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium flex items-center gap-1.5">
+                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                  Risk Description
+                </Label>
+                <Textarea
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  rows={3}
+                  className="resize-none"
+                  placeholder="Detailed description of the risk scenario..."
+                />
+              </div>
+            </div>
+
+            {/* Section 2: Inherent Risk Assessment */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 pb-1 border-b">
+                <Gauge className="h-4 w-4 text-amber-600" />
+                <h3 className="text-sm font-semibold text-slate-700">Inherent Risk Assessment</h3>
+                <span className="text-xs text-muted-foreground ml-auto">Before controls</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-5">
+                {/* Probability */}
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium flex items-center gap-1.5">
+                    <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
+                    Probability <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={formData.inherentProbability.toString()}
+                    onValueChange={(value) => setFormData({ ...formData, inherentProbability: parseInt(value) })}
+                  >
+                    <SelectTrigger className={cn('h-10', getProbabilityLabel(formData.inherentProbability).color, 'border')}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PROBABILITY_LABELS.map((prob) => (
+                        <SelectItem key={prob.value} value={prob.value.toString()}>
+                          <span className="flex items-center gap-2">
+                            <span className={cn('h-2.5 w-2.5 rounded-full', {
+                              'bg-green-500': prob.value === 1, 'bg-blue-500': prob.value === 2,
+                              'bg-yellow-500': prob.value === 3, 'bg-orange-500': prob.value === 4, 'bg-red-500': prob.value === 5,
+                            })} />
+                            {prob.value} - {prob.label}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground italic">{getProbabilityLabel(formData.inherentProbability).description}</p>
+                </div>
+
+                {/* Impact */}
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium flex items-center gap-1.5">
+                    <Zap className="h-3.5 w-3.5 text-muted-foreground" />
+                    Impact <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={formData.inherentImpact.toString()}
+                    onValueChange={(value) => setFormData({ ...formData, inherentImpact: parseInt(value) })}
+                  >
+                    <SelectTrigger className={cn('h-10', getImpactLabel(formData.inherentImpact).color, 'border')}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {IMPACT_LABELS.map((impact) => (
+                        <SelectItem key={impact.value} value={impact.value.toString()}>
+                          <span className="flex items-center gap-2">
+                            <span className={cn('h-2.5 w-2.5 rounded-full', {
+                              'bg-green-500': impact.value === 1, 'bg-blue-500': impact.value === 2,
+                              'bg-yellow-500': impact.value === 3, 'bg-orange-500': impact.value === 4, 'bg-red-500': impact.value === 5,
+                            })} />
+                            {impact.value} - {impact.label}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground italic">{getImpactLabel(formData.inherentImpact).description}</p>
+                </div>
+              </div>
+
+              {/* Live Risk Score */}
+              {(() => {
+                const editScore = formData.inherentProbability * formData.inherentImpact
+                const editLevel = getRiskLevel(editScore)
+                const editProbLabel = getProbabilityLabel(formData.inherentProbability)
+                const editImpactLabel = getImpactLabel(formData.inherentImpact)
+                return (
+                  <div className={cn('rounded-xl border-2 p-3.5 transition-all', editLevel.bgLight)}>
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Calculated Inherent Risk</p>
+                        <p className="text-xs text-muted-foreground">
+                          {editProbLabel.label} ({formData.inherentProbability}) x {editImpactLabel.label} ({formData.inherentImpact})
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <span className={cn('text-3xl font-bold tabular-nums', {
+                          'text-green-700': editScore < 6, 'text-yellow-700': editScore >= 6 && editScore < 15,
+                          'text-orange-700': editScore >= 15 && editScore < 20, 'text-red-700': editScore >= 20,
+                        })}>{editScore}</span>
+                        <Badge className={cn('text-xs px-2.5 py-0.5', editLevel.color)}>{editLevel.label}</Badge>
+                      </div>
+                    </div>
+                    {/* Mini 5x5 heatmap */}
+                    <div className="mt-2.5 flex gap-0.5">
+                      {[1, 2, 3, 4, 5].map(l => (
+                        <div key={l} className="flex-1 flex flex-col gap-0.5">
+                          {[5, 4, 3, 2, 1].map(i => {
+                            const cs = l * i
+                            const active = l === formData.inherentProbability && i === formData.inherentImpact
+                            return (
+                              <div key={`${l}-${i}`} className={cn(
+                                'h-1.5 rounded-sm transition-all',
+                                cs >= 20 ? 'bg-red-400' : cs >= 15 ? 'bg-orange-400' : cs >= 6 ? 'bg-yellow-400' : 'bg-green-400',
+                                active && 'ring-2 ring-offset-1 ring-foreground h-2.5 -my-0.5',
+                                !active && 'opacity-30'
+                              )} />
+                            )
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+
+            {/* Section 3: Controls & Mitigation */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 pb-1 border-b">
+                <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                <h3 className="text-sm font-semibold text-slate-700">Controls & Mitigation</h3>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium flex items-center gap-1.5">
+                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                  Control Description
+                </Label>
+                <Textarea
+                  value={formData.controlDescription}
+                  onChange={(e) => setFormData({ ...formData, controlDescription: e.target.value })}
+                  rows={2}
+                  className="resize-none"
+                  placeholder="Describe existing controls that address this risk..."
+                />
+                <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                  <Info className="h-3 w-3 mt-0.5 shrink-0 text-blue-400" />
+                  List controls already in place. This helps determine the gap between inherent and residual risk.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium flex items-center gap-1.5">
+                  <Shield className="h-3.5 w-3.5 text-muted-foreground" />
+                  Control Reference (ISO 27001 Annex A)
+                </Label>
+                <Popover open={editControlSearchOpen} onOpenChange={setEditControlSearchOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={editControlSearchOpen}
+                      className="w-full justify-between h-auto min-h-[40px] font-normal"
+                    >
+                      {editSelectedControls.length > 0 ? (
+                        <div className="flex flex-wrap gap-1 py-0.5">
+                          {editSelectedControls.map((cid) => (
+                            <Badge
+                              key={cid}
+                              variant="secondary"
+                              className="text-xs gap-1 pr-1"
+                            >
+                              {cid}
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="ml-0.5 hover:bg-muted-foreground/20 rounded-full p-0.5 cursor-pointer"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setEditSelectedControls(editSelectedControls.filter((id) => id !== cid))
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.stopPropagation()
+                                    setEditSelectedControls(editSelectedControls.filter((id) => id !== cid))
+                                  }
+                                }}
+                              >
+                                <X className="h-3 w-3" />
+                              </span>
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">Search and select controls...</span>
+                      )}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Search controls (e.g., A.5.1, Access, Screening)..." />
+                      <CommandList>
+                        <CommandEmpty>No controls found.</CommandEmpty>
+                        <CommandGroup className="max-h-[250px] overflow-y-auto">
+                          {availableControls.map((ctrl: any) => {
+                            const isSelected = editSelectedControls.includes(ctrl.controlId)
+                            return (
+                              <CommandItem
+                                key={ctrl.controlId}
+                                value={`${ctrl.controlId} ${ctrl.name}`}
+                                onSelect={() => {
+                                  setEditSelectedControls(
+                                    isSelected
+                                      ? editSelectedControls.filter((id) => id !== ctrl.controlId)
+                                      : [...editSelectedControls, ctrl.controlId]
+                                  )
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    'mr-2 h-4 w-4',
+                                    isSelected ? 'opacity-100 text-emerald-600' : 'opacity-0'
+                                  )}
+                                />
+                                <span className="font-mono text-xs text-muted-foreground mr-2 w-12 shrink-0">
+                                  {ctrl.controlId}
+                                </span>
+                                <span className="text-sm truncate">{ctrl.name}</span>
+                              </CommandItem>
+                            )
+                          })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                {editSelectedControls.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-muted-foreground">
+                      {editSelectedControls.length} control{editSelectedControls.length !== 1 ? 's' : ''} selected
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-5 px-1.5 text-[10px] text-muted-foreground hover:text-destructive"
+                      onClick={() => setEditSelectedControls([])}
+                    >
+                      Clear all
+                    </Button>
+                  </div>
+                )}
+                <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                  <Info className="h-3 w-3 mt-0.5 shrink-0 text-blue-400" />
+                  Map to relevant ISO 27001:2022 Annex A controls. Search by control number or name.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium flex items-center gap-1.5">
+                  <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                  Comments
+                </Label>
+                <Textarea
+                  value={formData.comments}
+                  onChange={(e) => setFormData({ ...formData, comments: e.target.value })}
+                  rows={2}
+                  className="resize-none"
+                  placeholder="Additional notes, context, or review remarks..."
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="border-t bg-muted/30 px-6 py-3.5 flex items-center justify-between">
+            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+              Editing will reset approval status to <strong>Draft</strong>
+            </p>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setIsEditOpen(false)}>Cancel</Button>
+              <Button
+                size="sm"
+                onClick={handleUpdate}
+                disabled={updateMutation.isPending || !formData.title}
+                className="gap-1.5 bg-blue-600 hover:bg-blue-700 shadow-sm"
+              >
+                {updateMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                Update Risk
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
       {/* Treatment Dialog */}
       <Dialog open={isTreatmentOpen} onOpenChange={setIsTreatmentOpen}>
-        <DialogContent className="sm:max-w-[900px] w-full mx-2 max-h-[80vh]">
-          <DialogHeader>
-            <DialogTitle>Add Risk Treatment</DialogTitle>
-            <DialogDescription>
-              Record risk treatment activities for {selectedRisk?.riskId} - {selectedRisk?.title}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4 overflow-auto max-h-[65vh]">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label>Residual Probability</Label>
-                <Select
-                  value={treatmentData.residualProbability.toString()}
-                  onValueChange={(value) => setTreatmentData({ ...treatmentData, residualProbability: parseInt(value) })}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {PROBABILITY_LABELS.map((prob) => (
-                      <SelectItem key={prob.value} value={prob.value.toString()}>
-                        {prob.value} - {prob.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+        <DialogContent className="sm:max-w-[900px] w-full mx-2 max-h-[90vh] p-0 gap-0 overflow-hidden">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-emerald-700 to-teal-800 px-6 py-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-white/10 rounded-lg p-2">
+                <ShieldCheck className="h-5 w-5 text-white" />
               </div>
-              <div className="grid gap-2">
-                <Label>Residual Impact</Label>
-                <Select
-                  value={treatmentData.residualImpact.toString()}
-                  onValueChange={(value) => setTreatmentData({ ...treatmentData, residualImpact: parseInt(value) })}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {IMPACT_LABELS.map((impact) => (
-                      <SelectItem key={impact.value} value={impact.value.toString()}>
-                        {impact.value} - {impact.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div>
+                <DialogTitle className="text-white text-lg">Add Risk Treatment</DialogTitle>
+                <DialogDescription className="text-emerald-100 text-xs mt-0.5">
+                  Record treatment activities for {selectedRisk?.riskId} — {selectedRisk?.title}
+                </DialogDescription>
               </div>
+              {selectedRisk && (
+                <Badge className={cn('ml-auto text-xs', getRiskLevel(selectedRisk.inherentRisk || 0).color)}>
+                  Inherent: {getRiskLevel(selectedRisk.inherentRisk || 0).label} ({selectedRisk.inherentRisk || 0})
+                </Badge>
+              )}
             </div>
-            <div className="grid gap-2">
-              <Label>Risk Response</Label>
-              <Select
-                value={treatmentData.riskResponse}
-                onValueChange={(value) => setTreatmentData({ ...treatmentData, riskResponse: value })}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {RISK_RESPONSE_TYPES.map((type) => (
-                    <SelectItem key={type} value={type}>{type}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label>Control Description</Label>
-              <Textarea
-                value={treatmentData.controlDescription}
-                onChange={(e) => setTreatmentData({ ...treatmentData, controlDescription: e.target.value })}
-                rows={3}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Control Implementation Date</Label>
-              <Input
-                type="date"
-                value={treatmentData.controlImplementationDate}
-                onChange={(e) => setTreatmentData({ ...treatmentData, controlImplementationDate: e.target.value })}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Comments</Label>
-              <Textarea
-                value={treatmentData.comments}
-                onChange={(e) => setTreatmentData({ ...treatmentData, comments: e.target.value })}
-                rows={2}
-              />
-            </div>
-            <div className="rounded-lg border p-4 bg-muted/50">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Residual Risk Score</span>
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl font-bold">
-                    {treatmentData.residualProbability * treatmentData.residualImpact}
-                  </span>
-                  <Badge className={getRiskLevel(treatmentData.residualProbability * treatmentData.residualImpact).color}>
-                    {getRiskLevel(treatmentData.residualProbability * treatmentData.residualImpact).label}
-                  </Badge>
+          </div>
+
+          {/* Scrollable Body */}
+          <div className="overflow-auto max-h-[calc(90vh-160px)] px-6 py-5 space-y-5">
+
+            {/* Section 1: Residual Risk Assessment */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 pb-1 border-b">
+                <Gauge className="h-4 w-4 text-amber-600" />
+                <h3 className="text-sm font-semibold text-slate-700">Residual Risk Assessment</h3>
+                <span className="text-xs text-muted-foreground ml-auto">After controls</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-5">
+                {/* Residual Probability */}
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium flex items-center gap-1.5">
+                    <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
+                    Residual Probability <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={treatmentData.residualProbability.toString()}
+                    onValueChange={(value) => setTreatmentData({ ...treatmentData, residualProbability: parseInt(value) })}
+                  >
+                    <SelectTrigger className={cn('h-10', getProbabilityLabel(treatmentData.residualProbability).color, 'border')}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PROBABILITY_LABELS.map((prob) => (
+                        <SelectItem key={prob.value} value={prob.value.toString()}>
+                          <span className="flex items-center gap-2">
+                            <span className={cn('h-2.5 w-2.5 rounded-full', {
+                              'bg-green-500': prob.value === 1, 'bg-blue-500': prob.value === 2,
+                              'bg-yellow-500': prob.value === 3, 'bg-orange-500': prob.value === 4, 'bg-red-500': prob.value === 5,
+                            })} />
+                            {prob.value} - {prob.label}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground italic">{getProbabilityLabel(treatmentData.residualProbability).description}</p>
                 </div>
+
+                {/* Residual Impact */}
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium flex items-center gap-1.5">
+                    <Zap className="h-3.5 w-3.5 text-muted-foreground" />
+                    Residual Impact <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={treatmentData.residualImpact.toString()}
+                    onValueChange={(value) => setTreatmentData({ ...treatmentData, residualImpact: parseInt(value) })}
+                  >
+                    <SelectTrigger className={cn('h-10', getImpactLabel(treatmentData.residualImpact).color, 'border')}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {IMPACT_LABELS.map((impact) => (
+                        <SelectItem key={impact.value} value={impact.value.toString()}>
+                          <span className="flex items-center gap-2">
+                            <span className={cn('h-2.5 w-2.5 rounded-full', {
+                              'bg-green-500': impact.value === 1, 'bg-blue-500': impact.value === 2,
+                              'bg-yellow-500': impact.value === 3, 'bg-orange-500': impact.value === 4, 'bg-red-500': impact.value === 5,
+                            })} />
+                            {impact.value} - {impact.label}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground italic">{getImpactLabel(treatmentData.residualImpact).description}</p>
+                </div>
+              </div>
+
+              {/* Live Residual Risk Score with heatmap */}
+              {(() => {
+                const tScore = treatmentData.residualProbability * treatmentData.residualImpact
+                const tLevel = getRiskLevel(tScore)
+                const tProbLabel = getProbabilityLabel(treatmentData.residualProbability)
+                const tImpactLabel = getImpactLabel(treatmentData.residualImpact)
+                const inherentScore = selectedRisk?.inherentRisk || (selectedRisk?.likelihood * selectedRisk?.impact) || 0
+                const reduction = inherentScore > 0 ? Math.round(((inherentScore - tScore) / inherentScore) * 100) : 0
+                return (
+                  <div className={cn('rounded-xl border-2 p-3.5 transition-all', tLevel.bgLight)}>
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Calculated Residual Risk</p>
+                        <p className="text-xs text-muted-foreground">
+                          {tProbLabel.label} ({treatmentData.residualProbability}) x {tImpactLabel.label} ({treatmentData.residualImpact})
+                        </p>
+                        {reduction > 0 && (
+                          <p className="text-xs text-emerald-600 font-medium">
+                            {reduction}% risk reduction from inherent score ({inherentScore})
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <span className={cn('text-3xl font-bold tabular-nums', {
+                          'text-green-700': tScore < 6, 'text-yellow-700': tScore >= 6 && tScore < 15,
+                          'text-orange-700': tScore >= 15 && tScore < 20, 'text-red-700': tScore >= 20,
+                        })}>{tScore}</span>
+                        <Badge className={cn('text-xs px-2.5 py-0.5', tLevel.color)}>{tLevel.label}</Badge>
+                      </div>
+                    </div>
+                    {/* Mini 5x5 heatmap */}
+                    <div className="mt-2.5 flex gap-0.5">
+                      {[1, 2, 3, 4, 5].map(l => (
+                        <div key={l} className="flex-1 flex flex-col gap-0.5">
+                          {[5, 4, 3, 2, 1].map(i => {
+                            const cs = l * i
+                            const active = l === treatmentData.residualProbability && i === treatmentData.residualImpact
+                            return (
+                              <div key={`${l}-${i}`} className={cn(
+                                'h-1.5 rounded-sm transition-all',
+                                cs >= 20 ? 'bg-red-400' : cs >= 15 ? 'bg-orange-400' : cs >= 6 ? 'bg-yellow-400' : 'bg-green-400',
+                                active && 'ring-2 ring-offset-1 ring-foreground h-2.5 -my-0.5',
+                                !active && 'opacity-30'
+                              )} />
+                            )
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+
+            {/* Section 2: Treatment Details */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 pb-1 border-b">
+                <Target className="h-4 w-4 text-blue-600" />
+                <h3 className="text-sm font-semibold text-slate-700">Treatment Details</h3>
+              </div>
+
+              <div className="grid grid-cols-2 gap-5">
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium flex items-center gap-1.5">
+                    <Shield className="h-3.5 w-3.5 text-muted-foreground" />
+                    Risk Response <span className="text-red-500">*</span>
+                  </Label>
+                  <Select value={treatmentData.riskResponse} onValueChange={(value) => setTreatmentData({ ...treatmentData, riskResponse: value })}>
+                    <SelectTrigger className={cn('h-10', {
+                      'bg-blue-50 text-blue-800 border-blue-200': treatmentData.riskResponse === 'MITIGATE',
+                      'bg-green-50 text-green-800 border-green-200': treatmentData.riskResponse === 'ACCEPT',
+                      'bg-purple-50 text-purple-800 border-purple-200': treatmentData.riskResponse === 'TRANSFER',
+                      'bg-red-50 text-red-800 border-red-200': treatmentData.riskResponse === 'AVOID',
+                    })}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {RISK_RESPONSE_TYPES.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          <span className="flex items-center gap-2">
+                            <span className={cn('h-2.5 w-2.5 rounded-full', {
+                              'bg-blue-500': type === 'MITIGATE', 'bg-green-500': type === 'ACCEPT',
+                              'bg-purple-500': type === 'TRANSFER', 'bg-red-500': type === 'AVOID',
+                            })} />
+                            {type}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                    <Info className="h-3 w-3 mt-0.5 shrink-0 text-blue-400" />
+                    How the organization plans to address this risk.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium flex items-center gap-1.5">
+                    <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                    Control Implementation Date
+                  </Label>
+                  <Input
+                    type="date"
+                    value={treatmentData.controlImplementationDate}
+                    onChange={(e) => setTreatmentData({ ...treatmentData, controlImplementationDate: e.target.value })}
+                    className="h-10"
+                  />
+                  <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                    <Info className="h-3 w-3 mt-0.5 shrink-0 text-blue-400" />
+                    Target or actual date when treatment controls are implemented.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium flex items-center gap-1.5">
+                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                  Control Description <span className="text-red-500">*</span>
+                </Label>
+                <Textarea
+                  value={treatmentData.controlDescription}
+                  onChange={(e) => setTreatmentData({ ...treatmentData, controlDescription: e.target.value })}
+                  rows={3}
+                  className="resize-none"
+                  placeholder="Describe the controls being implemented to treat this risk..."
+                />
+                <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                  <Info className="h-3 w-3 mt-0.5 shrink-0 text-blue-400" />
+                  Detail the specific controls and measures being implemented to reduce this risk.
+                </p>
+              </div>
+            </div>
+
+            {/* Section 3: Control Reference & Comments */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 pb-1 border-b">
+                <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                <h3 className="text-sm font-semibold text-slate-700">Controls & Notes</h3>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium flex items-center gap-1.5">
+                  <Shield className="h-3.5 w-3.5 text-muted-foreground" />
+                  Control Reference (ISO 27001 Annex A)
+                </Label>
+                <Popover open={treatmentControlSearchOpen} onOpenChange={setTreatmentControlSearchOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={treatmentControlSearchOpen}
+                      className="w-full justify-between h-auto min-h-[40px] font-normal"
+                    >
+                      {treatmentSelectedControls.length > 0 ? (
+                        <div className="flex flex-wrap gap-1 py-0.5">
+                          {treatmentSelectedControls.map((cid) => (
+                            <Badge
+                              key={cid}
+                              variant="secondary"
+                              className="text-xs gap-1 pr-1"
+                            >
+                              {cid}
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="ml-0.5 hover:bg-muted-foreground/20 rounded-full p-0.5 cursor-pointer"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setTreatmentSelectedControls(treatmentSelectedControls.filter((id) => id !== cid))
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.stopPropagation()
+                                    setTreatmentSelectedControls(treatmentSelectedControls.filter((id) => id !== cid))
+                                  }
+                                }}
+                              >
+                                <X className="h-3 w-3" />
+                              </span>
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">Search and select controls...</span>
+                      )}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Search controls (e.g., A.5.1, Access, Screening)..." />
+                      <CommandList>
+                        <CommandEmpty>No controls found.</CommandEmpty>
+                        <CommandGroup className="max-h-[250px] overflow-y-auto">
+                          {availableControls.map((ctrl: any) => {
+                            const isSelected = treatmentSelectedControls.includes(ctrl.controlId)
+                            return (
+                              <CommandItem
+                                key={ctrl.controlId}
+                                value={`${ctrl.controlId} ${ctrl.name}`}
+                                onSelect={() => {
+                                  setTreatmentSelectedControls(
+                                    isSelected
+                                      ? treatmentSelectedControls.filter((id) => id !== ctrl.controlId)
+                                      : [...treatmentSelectedControls, ctrl.controlId]
+                                  )
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    'mr-2 h-4 w-4',
+                                    isSelected ? 'opacity-100 text-emerald-600' : 'opacity-0'
+                                  )}
+                                />
+                                <span className="font-mono text-xs text-muted-foreground mr-2 w-12 shrink-0">
+                                  {ctrl.controlId}
+                                </span>
+                                <span className="text-sm truncate">{ctrl.name}</span>
+                              </CommandItem>
+                            )
+                          })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                {treatmentSelectedControls.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-muted-foreground">
+                      {treatmentSelectedControls.length} control{treatmentSelectedControls.length !== 1 ? 's' : ''} selected
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-5 px-1.5 text-[10px] text-muted-foreground hover:text-destructive"
+                      onClick={() => setTreatmentSelectedControls([])}
+                    >
+                      Clear all
+                    </Button>
+                  </div>
+                )}
+                <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                  <Info className="h-3 w-3 mt-0.5 shrink-0 text-blue-400" />
+                  Map to relevant ISO 27001:2022 Annex A controls used in this treatment.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium flex items-center gap-1.5">
+                  <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                  Comments
+                </Label>
+                <Textarea
+                  value={treatmentData.comments}
+                  onChange={(e) => setTreatmentData({ ...treatmentData, comments: e.target.value })}
+                  rows={2}
+                  className="resize-none"
+                  placeholder="Additional notes, review remarks, or follow-up actions..."
+                />
               </div>
             </div>
           </div>
+
+          {/* Footer */}
+          <div className="border-t bg-muted/30 px-6 py-3.5 flex items-center justify-between">
+            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Info className="h-3.5 w-3.5 text-blue-500" />
+              Treatment records are tracked in the Risk Treatment Plan tab
+            </p>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setIsTreatmentOpen(false)}>Cancel</Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  if (!selectedRisk) return
+                  const controlsReference = treatmentSelectedControls
+                    .map(cid => {
+                      const ctrl = availableControls.find((c: any) => c.controlId === cid)
+                      return ctrl ? `${ctrl.controlId} ${ctrl.name}` : cid
+                    })
+                    .join(', ')
+                  treatmentMutation.mutate({ id: selectedRisk.id, data: { ...treatmentData, controlsReference } })
+                }}
+                disabled={treatmentMutation.isPending || !treatmentData.controlDescription}
+                className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 shadow-sm"
+              >
+                {treatmentMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                Save Treatment
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Retire Dialog */}
+      <Dialog open={isRetireOpen} onOpenChange={setIsRetireOpen}>
+        <DialogContent className="sm:max-w-[700px] w-full mx-2 max-h-[60vh]">
+          <DialogHeader>
+            <DialogTitle>Retire Risk</DialogTitle>
+            <DialogDescription>Retire {selectedRisk?.riskId} - {selectedRisk?.title}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4 overflow-auto max-h-[48vh]">
+            <div className="grid gap-2">
+              <Label>Reason for Retirement</Label>
+              <Textarea value={retireData.reason} onChange={(e) => setRetireData({ reason: e.target.value })} rows={4} placeholder="Explain why this risk is being retired" />
+            </div>
+          </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsTreatmentOpen(false)}>Cancel</Button>
-            <Button onClick={() => {
-              if (!selectedRisk) return
-              treatmentMutation.mutate({ id: selectedRisk.id, data: treatmentData })
-            }} disabled={treatmentMutation.isPending}>
-              {treatmentMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Save Treatment
+            <Button variant="outline" onClick={() => setIsRetireOpen(false)}>Cancel</Button>
+            <Button onClick={() => { if (!selectedRisk) return; retireMutation.mutate({ id: selectedRisk.id, data: retireData }) }} disabled={retireMutation.isPending || !retireData.reason} variant="destructive">
+              {retireMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Retire Risk
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Submit for Review Dialog */}
+      <Dialog open={isSubmitOpen} onOpenChange={setIsSubmitOpen}>
+        <DialogContent className="sm:max-w-[600px] w-full mx-2">
+          <DialogHeader>
+            <DialogTitle>Submit Risk Register for Review</DialogTitle>
+            <DialogDescription>Submit the Risk Register document for the approval workflow.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Version Bump</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {(['none', 'minor', 'major'] as const).map((opt) => (
+                  <Button key={opt} type="button" variant={submitVersionBump === opt ? 'default' : 'outline'} size="sm" onClick={() => setSubmitVersionBump(opt)}>
+                    {opt === 'none' ? 'Keep Current' : opt === 'minor' ? 'Minor' : 'Major'}
+                  </Button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Current: v{riskDoc?.version?.toFixed(1)}
+                {submitVersionBump !== 'none' && ` → ${submitVersionBump} bump`}
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label>Description of Change *</Label>
+              <Textarea value={submitChangeDescription} onChange={(e) => setSubmitChangeDescription(e.target.value)} rows={3} placeholder="Describe the changes being submitted for review..." />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsSubmitOpen(false)}>Cancel</Button>
+            <Button onClick={() => submitForReviewMutation.mutate()} disabled={submitForReviewMutation.isPending || !submitChangeDescription}>
+              {submitForReviewMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              <SendHorizontal className="mr-2 h-4 w-4" />
+              Submit for Review
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1408,39 +1946,24 @@ export default function RisksPage() {
         <DialogContent className="sm:max-w-[600px] w-full mx-2">
           <DialogHeader>
             <DialogTitle>
-              {selectedRisk?.approvalStatus === 'PENDING_FIRST_APPROVAL'
-                ? '1st Level Approval (COO)'
-                : '2nd Level Approval (CEO)'}
+              {riskDoc?.approvalStatus === 'PENDING_FIRST_APPROVAL' ? '1st Level Approval' : '2nd Level Approval (Final)'}
             </DialogTitle>
             <DialogDescription>
-              Approve {selectedRisk?.riskId} - {selectedRisk?.title}
-              {selectedRisk?.approvalStatus === 'PENDING_SECOND_APPROVAL' && (
-                <span className="block mt-1 text-green-600">
-                  This is the final approval. The risk will be marked as approved at v{selectedRisk?.version?.toFixed(1)}.
-                </span>
+              Approve the Risk Register document (v{riskDoc?.version?.toFixed(1)}).
+              {riskDoc?.approvalStatus === 'PENDING_SECOND_APPROVAL' && (
+                <span className="block mt-1 text-green-600">This is the final approval.</span>
               )}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="rounded-lg border p-3 bg-muted/50 text-sm space-y-1">
-              <div><strong>Risk:</strong> {selectedRisk?.title}</div>
-              <div><strong>Current Version:</strong> {selectedRisk?.version?.toFixed(1)}</div>
-              <div><strong>Inherent Risk:</strong> {selectedRisk?.inherentRisk}</div>
-              {selectedRisk?.residualRisk && (
-                <div><strong>Residual Risk:</strong> {selectedRisk.residualRisk}</div>
-              )}
-            </div>
+          <div className="rounded-lg border p-3 bg-muted/50 text-sm space-y-1">
+            <div><strong>Document:</strong> {riskDoc?.title}</div>
+            <div><strong>Version:</strong> {riskDoc?.version?.toFixed(1)}</div>
+            <div><strong>Classification:</strong> {riskDoc?.classification}</div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsApprovalOpen(false)}>Cancel</Button>
-            <Button
-              onClick={submitApproval}
-              disabled={firstApprovalMutation.isPending || secondApprovalMutation.isPending}
-              className="bg-green-600 hover:bg-green-700"
-            >
-              {(firstApprovalMutation.isPending || secondApprovalMutation.isPending) && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
+            <Button onClick={submitApproval} disabled={firstApprovalMutation.isPending || secondApprovalMutation.isPending} className="bg-green-600 hover:bg-green-700">
+              {(firstApprovalMutation.isPending || secondApprovalMutation.isPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               <CheckCircle2 className="mr-2 h-4 w-4" />
               Approve
             </Button>
@@ -1452,29 +1975,18 @@ export default function RisksPage() {
       <Dialog open={isRejectOpen} onOpenChange={setIsRejectOpen}>
         <DialogContent className="sm:max-w-[600px] w-full mx-2">
           <DialogHeader>
-            <DialogTitle>Reject Risk</DialogTitle>
-            <DialogDescription>
-              Reject {selectedRisk?.riskId} - {selectedRisk?.title}. The risk will be sent back for revision.
-            </DialogDescription>
+            <DialogTitle>Reject Risk Register</DialogTitle>
+            <DialogDescription>Reject the Risk Register document. It will be sent back for revision.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
               <Label>Rejection Reason *</Label>
-              <Textarea
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-                rows={4}
-                placeholder="Explain why this risk is being rejected and what changes are needed..."
-              />
+              <Textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={4} placeholder="Explain why the Risk Register is being rejected and what changes are needed..." />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsRejectOpen(false)}>Cancel</Button>
-            <Button
-              variant="destructive"
-              onClick={submitRejection}
-              disabled={rejectMutation.isPending || !rejectReason}
-            >
+            <Button variant="destructive" onClick={() => rejectMutation.mutate()} disabled={rejectMutation.isPending || !rejectReason}>
               {rejectMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               <XCircle className="mr-2 h-4 w-4" />
               Reject
@@ -1483,199 +1995,58 @@ export default function RisksPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Submit for Review Dialog */}
-      <Dialog open={isSubmitOpen} onOpenChange={setIsSubmitOpen}>
+      {/* New Revision Dialog */}
+      <Dialog open={isNewRevisionOpen} onOpenChange={setIsNewRevisionOpen}>
         <DialogContent className="sm:max-w-[600px] w-full mx-2">
           <DialogHeader>
-            <DialogTitle>Submit for Review</DialogTitle>
+            <DialogTitle>Create New Revision</DialogTitle>
             <DialogDescription>
-              Submit {selectedRisk?.riskId} - {selectedRisk?.title} for approval workflow.
+              Start a new revision of the Risk Register. Current approved version: v{riskDoc?.version?.toFixed(1)}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label>Version Bump</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['none', 'minor', 'major'] as const).map((opt) => (
-                  <Button
-                    key={opt}
-                    type="button"
-                    variant={submitVersionBump === opt ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setSubmitVersionBump(opt)}
-                  >
-                    {opt === 'none' ? 'Keep Current' : opt === 'minor' ? 'Minor' : 'Major'}
+              <Label>Version Increment</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {(['minor', 'major'] as const).map((opt) => (
+                  <Button key={opt} type="button" variant={revisionVersionBump === opt ? 'default' : 'outline'} size="sm" onClick={() => setRevisionVersionBump(opt)}>
+                    {opt === 'minor' ? `Minor (e.g., ${riskDoc?.version?.toFixed(1)} → next minor)` : `Major (e.g., → ${(Math.floor(riskDoc?.version || 0) + 1)}.0)`}
                   </Button>
                 ))}
               </div>
-              <p className="text-xs text-muted-foreground">
-                Current: v{selectedRisk?.version?.toFixed(1)}
-                {submitVersionBump !== 'none' && ` → ${submitVersionBump} bump`}
-              </p>
             </div>
             <div className="grid gap-2">
               <Label>Description of Change *</Label>
-              <Textarea
-                value={submitDescription}
-                onChange={(e) => setSubmitDescription(e.target.value)}
-                rows={3}
-                placeholder="Describe the changes being submitted for review..."
-              />
+              <Textarea value={revisionChangeDescription} onChange={(e) => setRevisionChangeDescription(e.target.value)} rows={3} placeholder="Describe what changes will be made in this revision..." />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsSubmitOpen(false)}>Cancel</Button>
-            <Button
-              onClick={() => {
-                if (!selectedRisk || !submitDescription) return
-                submitForReviewMutation.mutate({
-                  id: selectedRisk.id,
-                  changeDescription: submitDescription,
-                  versionBump: submitVersionBump,
-                })
-              }}
-              disabled={submitForReviewMutation.isPending || !submitDescription}
-            >
-              {submitForReviewMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              <SendHorizontal className="mr-2 h-4 w-4" />
-              Submit for Review
+            <Button variant="outline" onClick={() => setIsNewRevisionOpen(false)}>Cancel</Button>
+            <Button onClick={() => newRevisionMutation.mutate()} disabled={newRevisionMutation.isPending || !revisionChangeDescription}>
+              {newRevisionMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              <Pencil className="mr-2 h-4 w-4" />
+              Start New Revision
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Retire Dialog */}
-      <Dialog open={isRetireOpen} onOpenChange={setIsRetireOpen}>
-        <DialogContent className="sm:max-w-[700px] w-full mx-2 max-h-[60vh]">
+      {/* Discard Revision Dialog */}
+      <Dialog open={isDiscardRevisionOpen} onOpenChange={setIsDiscardRevisionOpen}>
+        <DialogContent className="sm:max-w-[500px] w-full mx-2">
           <DialogHeader>
-            <DialogTitle>Retire Risk</DialogTitle>
+            <DialogTitle>Discard Revision</DialogTitle>
             <DialogDescription>
-              Retire {selectedRisk?.riskId} - {selectedRisk?.title}
+              Are you sure you want to discard the current draft revision (v{riskDoc?.version?.toFixed(1)})? This will revert the document to its previous approved version.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4 overflow-auto max-h-[48vh]">
-            <div className="grid gap-2">
-              <Label>Reason for Retirement</Label>
-              <Textarea
-                value={retireData.reason}
-                onChange={(e) => setRetireData({ reason: e.target.value })}
-                rows={4}
-                placeholder="Explain why this risk is being retired"
-              />
-            </div>
-          </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsRetireOpen(false)}>Cancel</Button>
-            <Button
-              onClick={() => {
-                if (!selectedRisk) return
-                retireMutation.mutate({ id: selectedRisk.id, data: retireData })
-              }}
-              disabled={retireMutation.isPending || !retireData.reason}
-              variant="destructive"
-            >
-              {retireMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Retire Risk
+            <Button variant="outline" onClick={() => setIsDiscardRevisionOpen(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => discardRevisionMutation.mutate()} disabled={discardRevisionMutation.isPending}>
+              {discardRevisionMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              <Trash2 className="mr-2 h-4 w-4" />
+              Discard Revision
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Version History Dialog (opened from actions dropdown) */}
-      <Dialog open={isVersionHistoryOpen && activeTab !== 'versions'} onOpenChange={setIsVersionHistoryOpen}>
-        <DialogContent className="sm:max-w-[900px] w-full mx-2 max-h-[80vh]">
-          <DialogHeader>
-            <DialogTitle>Version History</DialogTitle>
-            <DialogDescription>
-              {selectedRisk?.riskId} - {selectedRisk?.title} (Current: v{selectedRisk?.version?.toFixed(1)})
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-4 overflow-auto max-h-[65vh]">
-            <Table className="min-w-[700px] text-sm">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[80px]">Version</TableHead>
-                  <TableHead className="w-[120px]">Date</TableHead>
-                  <TableHead>Description of Change</TableHead>
-                  <TableHead>Actor</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Designation</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {!versions || versions.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground">
-                      No version history available
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  versions.map((version: any) => {
-                    const isApproval = version.action?.includes('Approval')
-                    const isRejection = version.action === 'Rejected'
-                    const isMajor = version.version === Math.floor(version.version)
-
-                    return (
-                      <TableRow key={version.id} className={cn(
-                        isMajor && 'bg-green-50',
-                        isRejection && 'bg-red-50'
-                      )}>
-                        <TableCell className="font-mono font-bold">{version.version.toFixed(1)}</TableCell>
-                        <TableCell>{formatDate(version.createdAt)}</TableCell>
-                        <TableCell className="max-w-[250px]">
-                          {editingVersionId === version.id ? (
-                            <div className="flex items-center gap-2">
-                              <Input
-                                value={editingDescription}
-                                onChange={(e) => setEditingDescription(e.target.value)}
-                                className="h-8 text-sm"
-                                autoFocus
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' && selectedRisk) updateVersionDescriptionMutation.mutate({ riskId: selectedRisk.id, versionId: version.id, changeDescription: editingDescription })
-                                  if (e.key === 'Escape') setEditingVersionId(null)
-                                }}
-                              />
-                              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => selectedRisk && updateVersionDescriptionMutation.mutate({ riskId: selectedRisk.id, versionId: version.id, changeDescription: editingDescription })} disabled={!editingDescription.trim()}>
-                                <Save className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditingVersionId(null)}>
-                                <X className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2 group">
-                              <span>{version.changeDescription}</span>
-                              <button
-                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-muted"
-                                onClick={() => { setEditingVersionId(version.id); setEditingDescription(version.changeDescription) }}
-                              >
-                                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
-                              </button>
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell>{version.actor}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              isApproval && 'border-green-500 text-green-700',
-                              isRejection && 'border-red-500 text-red-700'
-                            )}
-                          >
-                            {version.action}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{version.actorDesignation || '-'}</TableCell>
-                      </TableRow>
-                    )
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsVersionHistoryOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

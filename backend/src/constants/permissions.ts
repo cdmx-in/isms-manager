@@ -13,6 +13,7 @@ export const MODULES = [
   'changes',
   'exemptions',
   'assessments',
+  'infrastructure',
   'audit_log',
   'users',
   'settings',
@@ -34,8 +35,9 @@ export const MODULE_ACTIONS: Record<Module, readonly Action[]> = {
   incidents:   ['view', 'edit'],
   changes:     ['view', 'edit'],
   exemptions:  ['view', 'edit', 'approve'],
-  assessments: ['view', 'edit', 'approve'],
-  audit_log:   ['view'],
+  assessments:     ['view', 'edit', 'approve'],
+  infrastructure:  ['view', 'edit'],
+  audit_log:       ['view'],
   users:       ['view', 'edit'],
   settings:    ['view', 'edit'],
 };
@@ -76,6 +78,7 @@ export function getLegacyPermissions(role: string): Permission[] {
         'assets:edit' as Permission,
         'exemptions:edit' as Permission,
         'assessments:edit' as Permission,
+        'infrastructure:edit' as Permission,
       ];
 
     case 'VIEWER':
@@ -98,6 +101,7 @@ export const MODULE_LABELS: Record<Module, string> = {
   changes: 'Changes',
   exemptions: 'Exemptions',
   assessments: 'Assessments',
+  infrastructure: 'Infrastructure',
   audit_log: 'Audit Log',
   users: 'Users',
   settings: 'Settings',

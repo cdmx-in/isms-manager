@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/stores/auth.store'
-import { organizationApi, roleApi } from '@/lib/api'
+import { organizationApi, roleApi, userApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -44,6 +44,8 @@ import {
   Pencil,
   Lock,
   KeyRound,
+  Check,
+  X,
 } from 'lucide-react'
 import { usePermission } from '@/hooks/usePermission'
 
@@ -59,6 +61,8 @@ function MembersTab() {
   const [addMemberOpen, setAddMemberOpen] = useState(false)
   const [newMember, setNewMember] = useState({ email: '', orgRoleId: '' })
   const [searchQuery, setSearchQuery] = useState('')
+  const [editingDesignationUserId, setEditingDesignationUserId] = useState<string | null>(null)
+  const [designationValue, setDesignationValue] = useState('')
 
   const { data: orgDetails, refetch: refetchOrg, isLoading } = useQuery({
     queryKey: ['organization', currentOrganizationId],
@@ -82,6 +86,7 @@ function MembersTab() {
       member.user?.email?.toLowerCase().includes(q) ||
       member.user?.firstName?.toLowerCase().includes(q) ||
       member.user?.lastName?.toLowerCase().includes(q) ||
+      member.user?.designation?.toLowerCase().includes(q) ||
       member.role?.toLowerCase().includes(q)
     )
   })
@@ -135,6 +140,20 @@ function MembersTab() {
     },
     onError: (error: any) => {
       const msg = error.response?.data?.error?.message || error.response?.data?.error || 'Failed to remove member'
+      toast({ title: msg, variant: 'destructive' })
+    },
+  })
+
+  const updateDesignationMutation = useMutation({
+    mutationFn: ({ userId, designation }: { userId: string; designation: string }) =>
+      userApi.updateUser(userId, { designation }),
+    onSuccess: () => {
+      refetchOrg()
+      setEditingDesignationUserId(null)
+      toast({ title: 'Designation updated' })
+    },
+    onError: (error: any) => {
+      const msg = error.response?.data?.error?.message || error.response?.data?.error || 'Failed to update designation'
       toast({ title: msg, variant: 'destructive' })
     },
   })
@@ -194,6 +213,7 @@ function MembersTab() {
                 <TableRow>
                   <TableHead>User</TableHead>
                   <TableHead>Email</TableHead>
+                  <TableHead>Designation</TableHead>
                   <TableHead>Role</TableHead>
                   {canEdit && <TableHead className="text-right">Actions</TableHead>}
                 </TableRow>
@@ -201,7 +221,7 @@ function MembersTab() {
               <TableBody>
                 {filteredMembers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={canEdit ? 4 : 3} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={canEdit ? 5 : 4} className="text-center py-8 text-muted-foreground">
                       {searchQuery ? 'No members match your search' : 'No members found'}
                     </TableCell>
                   </TableRow>
@@ -232,6 +252,75 @@ function MembersTab() {
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
                           {member.user?.email}
+                        </TableCell>
+                        <TableCell>
+                          {editingDesignationUserId === member.user?.id ? (
+                            <div className="flex items-center gap-1">
+                              <Input
+                                value={designationValue}
+                                onChange={(e) => setDesignationValue(e.target.value)}
+                                className="h-8 w-[180px] text-xs"
+                                placeholder="e.g. CISO, IT Manager"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    updateDesignationMutation.mutate({
+                                      userId: member.user.id,
+                                      designation: designationValue,
+                                    })
+                                  }
+                                  if (e.key === 'Escape') {
+                                    setEditingDesignationUserId(null)
+                                  }
+                                }}
+                              />
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                onClick={() =>
+                                  updateDesignationMutation.mutate({
+                                    userId: member.user.id,
+                                    designation: designationValue,
+                                  })
+                                }
+                                disabled={updateDesignationMutation.isPending}
+                              >
+                                {updateDesignationMutation.isPending ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Check className="h-3.5 w-3.5 text-green-600" />
+                                )}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                onClick={() => setEditingDesignationUserId(null)}
+                              >
+                                <X className="h-3.5 w-3.5 text-muted-foreground" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 group">
+                              <span className="text-sm text-muted-foreground">
+                                {member.user?.designation || '-'}
+                              </span>
+                              {canEdit && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  onClick={() => {
+                                    setEditingDesignationUserId(member.user?.id)
+                                    setDesignationValue(member.user?.designation || '')
+                                  }}
+                                >
+                                  <Pencil className="h-3 w-3 text-muted-foreground" />
+                                </Button>
+                              )}
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell>
                           {canEdit && !isSelf && orgRoles.length > 0 ? (

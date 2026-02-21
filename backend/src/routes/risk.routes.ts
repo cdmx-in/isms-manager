@@ -5,6 +5,7 @@ import { authenticate, requirePermission, AuthenticatedRequest } from '../middle
 import { validate } from '../middleware/validate.js';
 import { createRiskValidator, uuidParam, paginationQuery } from '../middleware/validators.js';
 import { createAuditLog } from '../services/audit.service.js';
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 
@@ -92,6 +93,679 @@ const createRiskVersionEntry = async (params: {
     },
   });
 };
+
+// ============================================
+// DOCUMENT-LEVEL HELPERS
+// ============================================
+
+const createNotification = async (
+  userId: string,
+  organizationId: string,
+  type: string,
+  title: string,
+  message: string,
+  link?: string
+) => {
+  try {
+    await prisma.notification.create({
+      data: { userId, organizationId, type, title, message, link },
+    });
+  } catch (err) {
+    logger.error('Failed to create notification:', err);
+  }
+};
+
+const getOrCreateRiskRegisterDocument = async (organizationId: string) => {
+  let doc = await prisma.riskRegisterDocument.findUnique({
+    where: { organizationId },
+    include: {
+      reviewer: { select: { id: true, firstName: true, lastName: true, email: true, avatar: true, designation: true } },
+      approver: { select: { id: true, firstName: true, lastName: true, email: true, avatar: true, designation: true } },
+      _count: { select: { versions: true } },
+    },
+  });
+
+  if (!doc) {
+    doc = await prisma.riskRegisterDocument.create({
+      data: { organizationId, version: 0.1, approvalStatus: 'DRAFT' },
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, avatar: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, avatar: true, designation: true } },
+        _count: { select: { versions: true } },
+      },
+    });
+  }
+
+  return doc;
+};
+
+const getNextRiskRegisterDocVersion = async (docId: string, isMajor: boolean): Promise<number> => {
+  const lastVersion = await prisma.riskRegisterVersion.findFirst({
+    where: { riskRegisterDocumentId: docId },
+    orderBy: { version: 'desc' },
+    select: { version: true },
+  });
+
+  if (!lastVersion) return 0.1;
+
+  if (isMajor) {
+    return Math.floor(lastVersion.version) + 1.0;
+  }
+
+  const major = Math.floor(lastVersion.version);
+  const minor = Math.round((lastVersion.version - major) * 10);
+  return Number((major + (minor + 1) / 10).toFixed(1));
+};
+
+const createRiskRegisterDocVersionEntry = async (params: {
+  riskRegisterDocumentId: string;
+  version: number;
+  changeDescription: string;
+  actor: string;
+  actorDesignation?: string;
+  action: string;
+  createdById?: string;
+  approvedById?: string;
+}) => {
+  return prisma.riskRegisterVersion.upsert({
+    where: {
+      riskRegisterDocumentId_version: {
+        riskRegisterDocumentId: params.riskRegisterDocumentId,
+        version: params.version,
+      },
+    },
+    update: {
+      changeDescription: params.changeDescription,
+      actor: params.actor,
+      actorDesignation: params.actorDesignation,
+      action: params.action,
+      createdById: params.createdById,
+      approvedById: params.approvedById,
+    },
+    create: {
+      riskRegisterDocumentId: params.riskRegisterDocumentId,
+      version: params.version,
+      changeDescription: params.changeDescription,
+      actor: params.actor,
+      actorDesignation: params.actorDesignation,
+      action: params.action,
+      createdById: params.createdById,
+      approvedById: params.approvedById,
+    },
+  });
+};
+
+// ============================================
+// DOCUMENT-LEVEL ROUTES
+// ============================================
+
+// Get Risk Register document (auto-creates if needed)
+router.get(
+  '/document',
+  authenticate,
+  requirePermission('risks', 'view'),
+  asyncHandler(async (req, res) => {
+    const { organizationId } = req.query;
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+
+    const doc = await getOrCreateRiskRegisterDocument(organizationId as string);
+
+    res.json({ success: true, data: doc });
+  })
+);
+
+// Update Risk Register document metadata (reviewer, approver, title, etc.)
+router.patch(
+  '/document',
+  authenticate,
+  requirePermission('risks', 'edit'),
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId, reviewerId, approverId, title, identification, classification } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+
+    const doc = await getOrCreateRiskRegisterDocument(organizationId);
+
+    const updateData: any = {};
+    if (reviewerId !== undefined) updateData.reviewerId = reviewerId || null;
+    if (approverId !== undefined) updateData.approverId = approverId || null;
+    if (title !== undefined) updateData.title = title;
+    if (identification !== undefined) updateData.identification = identification;
+    if (classification !== undefined) updateData.classification = classification;
+
+    const updated = await prisma.riskRegisterDocument.update({
+      where: { id: doc.id },
+      data: updateData,
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        _count: { select: { versions: true } },
+      },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'UPDATE',
+      entityType: 'RiskRegisterDocument',
+      entityId: doc.id,
+      newValues: updateData,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json({ success: true, data: updated });
+  })
+);
+
+// Get document version history
+router.get(
+  '/document/versions',
+  authenticate,
+  requirePermission('risks', 'view'),
+  asyncHandler(async (req, res) => {
+    const { organizationId } = req.query;
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+
+    const doc = await getOrCreateRiskRegisterDocument(organizationId as string);
+
+    const versions = await prisma.riskRegisterVersion.findMany({
+      where: { riskRegisterDocumentId: doc.id },
+      orderBy: { version: 'desc' },
+    });
+
+    res.json({ success: true, data: versions });
+  })
+);
+
+// Update version entry description
+router.patch(
+  '/document/versions/:versionId',
+  authenticate,
+  requirePermission('risks', 'edit'),
+  asyncHandler(async (req, res) => {
+    const { versionId } = req.params;
+    const authReq = req as AuthenticatedRequest;
+    const { changeDescription } = req.body;
+
+    if (!changeDescription?.trim()) throw new AppError('Change description is required', 400);
+
+    const version = await prisma.riskRegisterVersion.findUnique({ where: { id: versionId } });
+    if (!version) throw new AppError('Version entry not found', 404);
+
+    const doc = await prisma.riskRegisterDocument.findUnique({ where: { id: version.riskRegisterDocumentId } });
+    if (!doc) throw new AppError('Risk Register document not found', 404);
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === doc.organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('You are not a member of this organization', 403);
+    }
+
+    const updated = await prisma.riskRegisterVersion.update({
+      where: { id: versionId },
+      data: { changeDescription: changeDescription.trim() },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId: doc.organizationId,
+      action: 'UPDATE',
+      entityType: 'RiskRegisterVersion',
+      entityId: versionId,
+      oldValues: { changeDescription: version.changeDescription },
+      newValues: { changeDescription: changeDescription.trim() },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json({ success: true, data: updated });
+  })
+);
+
+// Submit Risk Register document for review
+router.post(
+  '/document/submit-for-review',
+  authenticate,
+  requirePermission('risks', 'edit'),
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId, changeDescription, versionBump } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+    if (!changeDescription) throw new AppError('Description of change is required', 400);
+
+    const doc = await getOrCreateRiskRegisterDocument(organizationId);
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('You are not a member of this organization', 403);
+    }
+    if (membership?.role === 'VIEWER') {
+      throw new AppError('Viewers cannot submit Risk Register for review', 403);
+    }
+
+    if (doc.approvalStatus !== 'DRAFT' && doc.approvalStatus !== 'REJECTED') {
+      throw new AppError(`Risk Register cannot be submitted for review from ${doc.approvalStatus} status`, 400);
+    }
+
+    const nextVersion = (!versionBump || versionBump === 'none')
+      ? doc.version
+      : await getNextRiskRegisterDocVersion(doc.id, versionBump === 'major');
+
+    const updated = await prisma.riskRegisterDocument.update({
+      where: { id: doc.id },
+      data: { approvalStatus: 'PENDING_FIRST_APPROVAL', version: nextVersion, updatedAt: new Date() },
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+      },
+    });
+
+    await createRiskRegisterDocVersionEntry({
+      riskRegisterDocumentId: doc.id,
+      version: nextVersion,
+      changeDescription: changeDescription || 'Risk Register submitted for review',
+      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
+      actorDesignation: authReq.user.designation || membership?.role || authReq.user.role,
+      action: 'Submitted for Review',
+      createdById: authReq.user.id,
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'UPDATE',
+      entityType: 'RiskRegisterDocument',
+      entityId: doc.id,
+      oldValues: { approvalStatus: doc.approvalStatus },
+      newValues: { approvalStatus: 'PENDING_FIRST_APPROVAL' },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    if (updated.reviewerId) {
+      await createNotification(
+        updated.reviewerId,
+        organizationId,
+        'risk_register_submitted',
+        'Risk Register Submitted for Review',
+        `${authReq.user.firstName} ${authReq.user.lastName} has submitted the Risk Register (v${nextVersion.toFixed(1)}) for your review.`,
+        '/risks?tab=approvals'
+      );
+    }
+
+    res.json({
+      success: true,
+      data: updated,
+      message: 'Risk Register submitted for 1st level approval',
+    });
+  })
+);
+
+// First level approval
+router.post(
+  '/document/first-approval',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+
+    const doc = await getOrCreateRiskRegisterDocument(organizationId);
+
+    if (doc.approvalStatus !== 'PENDING_FIRST_APPROVAL') {
+      throw new AppError(`Risk Register is not pending 1st level approval (current: ${doc.approvalStatus})`, 400);
+    }
+
+    if (authReq.user.role !== 'ADMIN' && doc.reviewerId !== authReq.user.id) {
+      throw new AppError('Only the assigned reviewer can provide 1st level approval', 403);
+    }
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('You are not a member of this organization', 403);
+    }
+
+    const currentVersion = doc.version;
+
+    const updated = await prisma.riskRegisterDocument.update({
+      where: { id: doc.id },
+      data: { approvalStatus: 'PENDING_SECOND_APPROVAL', updatedAt: new Date() },
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+      },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'APPROVE',
+      entityType: 'RiskRegisterDocument',
+      entityId: doc.id,
+      oldValues: { approvalStatus: 'PENDING_FIRST_APPROVAL' },
+      newValues: { approvalStatus: 'PENDING_SECOND_APPROVAL' },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    if (updated.approverId) {
+      await createNotification(
+        updated.approverId,
+        organizationId,
+        'risk_register_approved_first',
+        'Risk Register Pending Final Approval',
+        `${authReq.user.firstName} ${authReq.user.lastName} has given 1st level approval for the Risk Register (v${currentVersion.toFixed(1)}). Your final approval is needed.`,
+        '/risks?tab=approvals'
+      );
+    }
+
+    res.json({
+      success: true,
+      data: updated,
+      message: '1st level approval granted. Pending 2nd level approval.',
+    });
+  })
+);
+
+// Second level approval (final)
+router.post(
+  '/document/second-approval',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+
+    const doc = await getOrCreateRiskRegisterDocument(organizationId);
+
+    if (doc.approvalStatus !== 'PENDING_SECOND_APPROVAL') {
+      throw new AppError(`Risk Register is not pending 2nd level approval (current: ${doc.approvalStatus})`, 400);
+    }
+
+    if (authReq.user.role !== 'ADMIN' && doc.approverId !== authReq.user.id) {
+      throw new AppError('Only the assigned approver can provide 2nd level approval', 403);
+    }
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('You are not a member of this organization', 403);
+    }
+
+    const currentVersion = doc.version;
+
+    const updated = await prisma.riskRegisterDocument.update({
+      where: { id: doc.id },
+      data: { approvalStatus: 'APPROVED', updatedAt: new Date() },
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+      },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'APPROVE',
+      entityType: 'RiskRegisterDocument',
+      entityId: doc.id,
+      oldValues: { approvalStatus: 'PENDING_SECOND_APPROVAL' },
+      newValues: { approvalStatus: 'APPROVED' },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    if (updated.reviewerId && updated.reviewerId !== authReq.user.id) {
+      await createNotification(
+        updated.reviewerId,
+        organizationId,
+        'risk_register_approved_final',
+        'Risk Register Fully Approved',
+        `The Risk Register has been fully approved (v${currentVersion.toFixed(1)}) by ${authReq.user.firstName} ${authReq.user.lastName}.`,
+        '/risks?tab=versions'
+      );
+    }
+
+    res.json({
+      success: true,
+      data: updated,
+      message: 'Risk Register fully approved (v' + currentVersion.toFixed(1) + ')',
+    });
+  })
+);
+
+// Create new revision (reset APPROVED → DRAFT for a new editing cycle)
+router.post(
+  '/document/new-revision',
+  authenticate,
+  requirePermission('risks', 'edit'),
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId, changeDescription, versionBump } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+    if (!changeDescription) throw new AppError('Description of change is required', 400);
+
+    const doc = await getOrCreateRiskRegisterDocument(organizationId);
+
+    if (doc.approvalStatus !== 'APPROVED') {
+      throw new AppError(`Can only create a new revision from APPROVED status (current: ${doc.approvalStatus})`, 400);
+    }
+
+    const nextVersion = await getNextRiskRegisterDocVersion(doc.id, versionBump === 'major');
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === organizationId
+    );
+    if (!membership && authReq.user.role !== 'ADMIN') {
+      throw new AppError('You are not a member of this organization', 403);
+    }
+
+    const updated = await prisma.riskRegisterDocument.update({
+      where: { id: doc.id },
+      data: { approvalStatus: 'DRAFT', version: nextVersion, updatedAt: new Date() },
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        _count: { select: { versions: true } },
+      },
+    });
+
+    await createRiskRegisterDocVersionEntry({
+      riskRegisterDocumentId: doc.id,
+      version: nextVersion,
+      changeDescription: changeDescription || 'New revision started',
+      actor: `${authReq.user.firstName} ${authReq.user.lastName}`,
+      actorDesignation: authReq.user.designation || membership?.role || authReq.user.role,
+      action: 'Draft & Review',
+      createdById: authReq.user.id,
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'UPDATE',
+      entityType: 'RiskRegisterDocument',
+      entityId: doc.id,
+      oldValues: { approvalStatus: 'APPROVED', version: doc.version },
+      newValues: { approvalStatus: 'DRAFT', version: nextVersion },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json({
+      success: true,
+      data: updated,
+      message: `New revision started (v${nextVersion.toFixed(1)}). You can now make changes and submit for review.`,
+    });
+  })
+);
+
+// Discard a new revision (revert to APPROVED with previous version)
+router.post(
+  '/document/discard-revision',
+  authenticate,
+  requirePermission('risks', 'edit'),
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+
+    const doc = await getOrCreateRiskRegisterDocument(organizationId);
+
+    if (doc.approvalStatus !== 'DRAFT') {
+      throw new AppError('Can only discard a revision when status is DRAFT', 400);
+    }
+
+    const allVersions = await prisma.riskRegisterVersion.findMany({
+      where: { riskRegisterDocumentId: doc.id },
+      orderBy: { version: 'desc' },
+    });
+
+    if (allVersions.length === 0) {
+      throw new AppError('No version entries found', 400);
+    }
+
+    const latestVersion = allVersions[0];
+
+    if (latestVersion.action !== 'Draft & Review') {
+      throw new AppError('Can only discard a revision that has not yet been submitted for review', 400);
+    }
+
+    const previousVersions = allVersions.filter(v => v.version < latestVersion.version);
+    if (previousVersions.length === 0) {
+      throw new AppError('Cannot discard — this is the initial version', 400);
+    }
+
+    const prevVersion = previousVersions[0].version;
+
+    await prisma.riskRegisterVersion.deleteMany({
+      where: { riskRegisterDocumentId: doc.id, version: latestVersion.version },
+    });
+
+    const updated = await prisma.riskRegisterDocument.update({
+      where: { id: doc.id },
+      data: {
+        version: prevVersion,
+        approvalStatus: 'APPROVED',
+        updatedAt: new Date(),
+      },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'UPDATE',
+      entityType: 'RiskRegisterDocument',
+      entityId: doc.id,
+      oldValues: { approvalStatus: 'DRAFT', version: latestVersion.version },
+      newValues: { approvalStatus: 'APPROVED', version: prevVersion },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json({
+      success: true,
+      data: updated,
+      message: `Revision v${latestVersion.version.toFixed(1)} discarded. Reverted to v${prevVersion.toFixed(1)} (APPROVED).`,
+    });
+  })
+);
+
+// Reject Risk Register document
+router.post(
+  '/document/reject',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const { organizationId, reason } = req.body;
+
+    if (!organizationId) throw new AppError('Organization ID is required', 400);
+    if (!reason) throw new AppError('Rejection reason is required', 400);
+
+    const doc = await getOrCreateRiskRegisterDocument(organizationId);
+
+    if (!['PENDING_FIRST_APPROVAL', 'PENDING_SECOND_APPROVAL'].includes(doc.approvalStatus)) {
+      throw new AppError(`Risk Register is not pending approval (current: ${doc.approvalStatus})`, 400);
+    }
+
+    const isReviewer = doc.reviewerId === authReq.user.id;
+    const isApprover = doc.approverId === authReq.user.id;
+    const isGlobalAdmin = authReq.user.role === 'ADMIN';
+
+    if (!isGlobalAdmin) {
+      if (doc.approvalStatus === 'PENDING_FIRST_APPROVAL' && !isReviewer) {
+        throw new AppError('Only the assigned reviewer can reject at this stage', 403);
+      }
+      if (doc.approvalStatus === 'PENDING_SECOND_APPROVAL' && !isApprover) {
+        throw new AppError('Only the assigned approver can reject at this stage', 403);
+      }
+    }
+
+    const membership = authReq.user.organizationMemberships.find(
+      (m: any) => m.organizationId === organizationId
+    );
+    if (!membership && !isGlobalAdmin) {
+      throw new AppError('You are not a member of this organization', 403);
+    }
+
+    const updated = await prisma.riskRegisterDocument.update({
+      where: { id: doc.id },
+      data: { approvalStatus: 'REJECTED', updatedAt: new Date() },
+      include: {
+        reviewer: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+        approver: { select: { id: true, firstName: true, lastName: true, email: true, designation: true } },
+      },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'REJECT',
+      entityType: 'RiskRegisterDocument',
+      entityId: doc.id,
+      oldValues: { approvalStatus: doc.approvalStatus },
+      newValues: { approvalStatus: 'REJECTED', reason },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    const notifyUserId = updated.reviewerId && updated.reviewerId !== authReq.user.id
+      ? updated.reviewerId
+      : updated.approverId && updated.approverId !== authReq.user.id
+        ? updated.approverId
+        : null;
+
+    if (notifyUserId) {
+      await createNotification(
+        notifyUserId,
+        organizationId,
+        'risk_register_rejected',
+        'Risk Register Rejected',
+        `${authReq.user.firstName} ${authReq.user.lastName} has rejected the Risk Register: "${reason}"`,
+        '/risks?tab=approvals'
+      );
+    }
+
+    res.json({
+      success: true,
+      data: updated,
+      message: 'Risk Register rejected and sent back for revision.',
+    });
+  })
+);
 
 // ============================================
 // GET ROUTES
@@ -1001,6 +1675,7 @@ router.post(
       riskResponse,
       controlDescription,
       controlImplementationDate,
+      controlsReference,
       comments,
     } = req.body;
 
@@ -1039,16 +1714,20 @@ router.post(
     });
 
     // Update risk with residual risk and treatment info
+    const riskUpdate: any = {
+      residualRisk: residualProbability * residualImpact,
+      residualProbability,
+      residualImpact,
+      treatment: riskResponse,
+      controlDescription,
+      reviewedAt: new Date(),
+    };
+    if (controlsReference !== undefined) {
+      riskUpdate.controlsReference = controlsReference;
+    }
     await prisma.risk.update({
       where: { id },
-      data: {
-        residualRisk: residualProbability * residualImpact,
-        residualProbability,
-        residualImpact,
-        treatment: riskResponse,
-        controlDescription,
-        reviewedAt: new Date(),
-      },
+      data: riskUpdate,
     });
 
     // No version bump on treatment — user controls versioning at submit time

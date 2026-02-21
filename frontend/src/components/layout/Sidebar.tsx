@@ -12,17 +12,34 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Layers,
   Users,
   GitBranch,
   ShieldOff,
   ClipboardList,
+  Radio,
+  Cloud,
+  Building2,
+  ChevronsUpDown,
+  Lock,
 } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth.store'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
-const navItems = [
+interface NavItem {
+  name: string
+  href: string
+  icon: any
+  module: string
+  children?: NavItem[]
+}
+
+const navItems: NavItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, module: 'dashboard' },
   { name: 'Frameworks', href: '/frameworks', icon: Layers, module: 'frameworks' },
   { name: 'Assets', href: '/assets', icon: Server, module: 'assets' },
@@ -33,17 +50,62 @@ const navItems = [
   { name: 'Changes', href: '/changes', icon: GitBranch, module: 'changes' },
   { name: 'Exemptions', href: '/exemptions', icon: ShieldOff, module: 'exemptions' },
   { name: 'Assessments', href: '/assessments', icon: ClipboardList, module: 'assessments' },
-  { name: 'Audit Log', href: '/audit-log', icon: History, module: 'audit_log' },
-  { name: 'Users', href: '/users', icon: Users, module: 'users' },
-  { name: 'Settings', href: '/settings', icon: Settings, module: 'settings' },
+  {
+    name: 'Infrastructure',
+    href: '/infrastructure',
+    icon: Radio,
+    module: 'infrastructure',
+    children: [
+      { name: 'Cloudflare', href: '/infrastructure/cloudflare', icon: Cloud, module: 'infrastructure' },
+      { name: 'Google Workspace', href: '/infrastructure/google-workspace', icon: Building2, module: 'infrastructure' },
+      { name: 'Azure', href: '/infrastructure/azure', icon: Shield, module: 'infrastructure' },
+    ],
+  },
+  {
+    name: 'Admin',
+    href: '/admin',
+    icon: Lock,
+    module: 'users',
+    children: [
+      { name: 'Organizations', href: '/organizations', icon: Building2, module: 'settings' },
+      { name: 'Users', href: '/users', icon: Users, module: 'users' },
+      { name: 'Audit Log', href: '/audit-log', icon: History, module: 'audit_log' },
+      { name: 'Settings', href: '/settings', icon: Settings, module: 'settings' },
+    ],
+  },
 ]
 
 export function Sidebar() {
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
-  const hasPermission = useAuthStore(state => state.hasPermission)
+  const isChildActive = (item: NavItem) =>
+    item.children?.some(c => location.pathname === c.href || location.pathname.startsWith(c.href + '/')) ?? false
+
+  const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {}
+    navItems.forEach(item => {
+      if (item.children && isChildActive(item)) {
+        initial[item.name] = true
+      }
+    })
+    return initial
+  })
+  const { user, currentOrganizationId, setCurrentOrganization, hasPermission } = useAuthStore()
 
   const visibleNavItems = navItems.filter(item => hasPermission(item.module, 'view'))
+
+  const memberships = user?.organizationMemberships || []
+  const currentOrg = memberships.find(m => m.organizationId === currentOrganizationId)
+
+  const switchOrg = (orgId: string) => {
+    setCurrentOrganization(orgId)
+    // Reload page to refresh all data for new org
+    window.location.reload()
+  }
+
+  const toggleMenu = (name: string) => {
+    setExpandedMenus(prev => ({ ...prev, [name]: !prev[name] }))
+  }
 
   return (
     <aside
@@ -67,10 +129,119 @@ export function Sidebar() {
         )}
       </div>
 
+      {/* Organization Switcher */}
+      {!collapsed && memberships.length > 0 && (
+        <div className="px-3 py-2 border-b">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="w-full justify-between h-9 text-sm font-medium">
+                <div className="flex items-center gap-2 truncate">
+                  <Building2 className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                  <span className="truncate">{currentOrg?.organization?.name || 'Select Org'}</span>
+                </div>
+                <ChevronsUpDown className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-[232px]">
+              {memberships.map(m => (
+                <DropdownMenuItem
+                  key={m.organizationId}
+                  onClick={() => switchOrg(m.organizationId)}
+                  className={cn(
+                    'flex items-center justify-between',
+                    m.organizationId === currentOrganizationId && 'bg-accent'
+                  )}
+                >
+                  <span className="truncate">{m.organization.name}</span>
+                  <span className="text-xs text-muted-foreground ml-2">{m.role}</span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+      {collapsed && memberships.length > 1 && (
+        <div className="px-2 py-2 border-b flex justify-center">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8" title={currentOrg?.organization?.name}>
+                <Building2 className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="right" align="start">
+              {memberships.map(m => (
+                <DropdownMenuItem
+                  key={m.organizationId}
+                  onClick={() => switchOrg(m.organizationId)}
+                  className={cn(m.organizationId === currentOrganizationId && 'bg-accent')}
+                >
+                  {m.organization.name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+
       {/* Navigation */}
-      <nav className="flex-1 space-y-1 p-2">
+      <nav className="flex-1 space-y-1 p-2 overflow-y-auto">
         {visibleNavItems.map((item) => {
-          const isActive = location.pathname === item.href || location.pathname.startsWith(item.href + '/')
+          const hasChildren = item.children && item.children.length > 0
+          const isActive = hasChildren
+            ? isChildActive(item)
+            : location.pathname === item.href || location.pathname.startsWith(item.href + '/')
+          const isExpanded = expandedMenus[item.name]
+
+          if (hasChildren) {
+            return (
+              <div key={item.name}>
+                <button
+                  onClick={() => toggleMenu(item.name)}
+                  className={cn(
+                    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                    isActive
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                  )}
+                  title={collapsed ? item.name : undefined}
+                >
+                  <item.icon className="h-5 w-5 flex-shrink-0" />
+                  {!collapsed && (
+                    <>
+                      <span className="flex-1 text-left">{item.name}</span>
+                      <ChevronDown className={cn(
+                        'h-4 w-4 transition-transform',
+                        isExpanded && 'rotate-180'
+                      )} />
+                    </>
+                  )}
+                </button>
+                {!collapsed && isExpanded && (
+                  <div className="ml-4 mt-1 space-y-1 border-l pl-3">
+                    {item.children!.map((child) => {
+                      const isChildActive = location.pathname === child.href || location.pathname.startsWith(child.href + '/')
+                      return (
+                        <Link
+                          key={child.name}
+                          to={child.href}
+                          className={cn(
+                            'flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+                            isChildActive
+                              ? 'bg-primary text-primary-foreground'
+                              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                          )}
+                        >
+                          <child.icon className="h-4 w-4 flex-shrink-0" />
+                          <span>{child.name}</span>
+                        </Link>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          }
+
           return (
             <Link
               key={item.name}
@@ -108,6 +279,7 @@ export function Sidebar() {
           )}
         </Button>
       </div>
+
     </aside>
   )
 }

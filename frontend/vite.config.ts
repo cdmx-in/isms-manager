@@ -18,9 +18,7 @@ export default defineConfig({
       usePolling: true, // Required for Docker
     },
     allowedHosts: true,
-    hmr: {
-      clientPort: 8888,
-    },
+    hmr: true,
     proxy: {
       '/api': {
         target: 'http://backend:4000',

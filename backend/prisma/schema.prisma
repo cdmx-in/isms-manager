@@ -75,6 +75,8 @@ model User {
   requestedExemptions     Exemption[]  @relation("ExemptionRequestedBy")
   soaReviewerFor          SoADocument[] @relation("SoAReviewer")
   soaApproverFor          SoADocument[] @relation("SoAApprover")
+  riskRegisterReviewerFor RiskRegisterDocument[] @relation("RiskRegisterReviewer")
+  riskRegisterApproverFor RiskRegisterDocument[] @relation("RiskRegisterApprover")
   notifications           Notification[]
 
   @@index([email])
@@ -127,6 +129,7 @@ model Organization {
   files              FileUpload[]
   soaEntries         SoAEntry[]
   soaDocument        SoADocument?
+  riskRegisterDocument RiskRegisterDocument?
   driveFolders       DriveFolder[]
   driveDocuments     DriveDocument[]
   incidentEmbeddings IncidentEmbedding[]
@@ -134,6 +137,31 @@ model Organization {
   exemptions         Exemption[]
   notifications      Notification[]
   assessmentsV2      Assessment[]
+  infraConfigs       InfraMonitorConfig[]
+  dnsZones           DnsZone[]
+  dnsRecords         DnsRecord[]
+  infraScanLogs      InfraMonitorScanLog[]
+  gwConfig           GWorkspaceConfig?
+  gwUsers            GWorkspaceUser[]
+  gwGroups           GWorkspaceGroup[]
+  gwOAuthApps        GWorkspaceOAuthApp[]
+  gwMobileDevices    GWorkspaceMobileDevice[]
+  gwAlerts           GWorkspaceAlert[]
+  gwCisChecks        GWorkspaceCisCheck[]
+  gwScanLogs         GWorkspaceScanLog[]
+  gwOrgUnits         GWorkspaceOrgUnit[]
+  gwAdminRoles       GWorkspaceAdminRole[]
+  gwRoleAssignments  GWorkspaceRoleAssignment[]
+  azureConfig               AzureConfig?
+  azureUsers                AzureUser[]
+  azureGroups               AzureGroup[]
+  azureAppRegistrations     AzureAppRegistration[]
+  azureConditionalPolicies  AzureConditionalAccessPolicy[]
+  azureResources            AzureResource[]
+  azureSecurityAlerts       AzureSecurityAlert[]
+  azureDefenderAssessments  AzureDefenderAssessment[]
+  azureCisChecks            AzureCisCheck[]
+  azureScanLogs             AzureScanLog[]
 
   @@index([slug])
   @@map("organizations")
@@ -486,6 +514,58 @@ model RiskRetirement {
   @@index([riskId])
   @@index([retiredById])
   @@map("risk_retirements")
+}
+
+// ============================================
+// RISK REGISTER DOCUMENT (document-level versioning & approval)
+// ============================================
+
+model RiskRegisterDocument {
+  id               String         @id @default(uuid())
+  organizationId   String         @unique @map("organization_id")
+  identification   String         @default("ISMS-R-004")
+  title            String         @default("ISMS - Risk Register")
+  classification   String         @default("Internal")
+  version          Float          @default(0.1)
+  approvalStatus   ApprovalStatus @default(DRAFT) @map("approval_status")
+  reviewerId       String?        @map("reviewer_id")
+  approverId       String?        @map("approver_id")
+
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  reviewer         User?          @relation("RiskRegisterReviewer", fields: [reviewerId], references: [id])
+  approver         User?          @relation("RiskRegisterApprover", fields: [approverId], references: [id])
+  versions         RiskRegisterVersion[]
+
+  @@map("risk_register_documents")
+}
+
+// ============================================
+// RISK REGISTER VERSION HISTORY (document-level)
+// ============================================
+
+model RiskRegisterVersion {
+  id                    String                @id @default(uuid())
+  riskRegisterDocumentId String               @map("risk_register_document_id")
+  version               Float
+
+  changeDescription     String                @map("change_description")
+  actor                 String
+  actorDesignation      String?               @map("actor_designation")
+  action                String
+
+  createdById           String?               @map("created_by_id")
+  approvedById          String?               @map("approved_by_id")
+
+  createdAt             DateTime              @default(now()) @map("created_at")
+
+  riskRegisterDocument  RiskRegisterDocument  @relation(fields: [riskRegisterDocumentId], references: [id], onDelete: Cascade)
+
+  @@unique([riskRegisterDocumentId, version])
+  @@index([riskRegisterDocumentId])
+  @@map("risk_register_versions")
 }
 
 // ============================================
@@ -1446,4 +1526,599 @@ model AssessmentFinding {
   @@index([severity])
   @@index([status])
   @@map("assessment_findings")
+}
+
+// ============================================
+// INFRASTRUCTURE MONITORING
+// ============================================
+
+enum DomainExposureStatus {
+  PUBLIC
+  PRIVATE
+  UNREACHABLE
+  PENDING
+  ERROR
+
+  @@map("domain_exposure_status")
+}
+
+model InfraMonitorConfig {
+  id                 String       @id @default(uuid())
+  organizationId     String       @unique @map("organization_id")
+  cloudflareApiToken String       @map("cloudflare_api_token")
+  httpCheckProxy     String?      @map("http_check_proxy")
+  scanSchedule       String       @default("0 0 * * *") @map("scan_schedule") // cron expression
+  isEnabled          Boolean      @default(true) @map("is_enabled")
+
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("infra_monitor_configs")
+}
+
+model DnsZone {
+  id             String       @id @default(uuid())
+  organizationId String       @map("organization_id")
+  cloudflareId   String       @map("cloudflare_id")
+  name           String
+  status         String       @default("active")
+  nameservers    String[]     @default([])
+
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  records        DnsRecord[]
+
+  @@unique([organizationId, cloudflareId])
+  @@index([organizationId])
+  @@index([name])
+  @@map("dns_zones")
+}
+
+model DnsRecord {
+  id                 String               @id @default(uuid())
+  organizationId     String               @map("organization_id")
+  zoneId             String               @map("zone_id")
+  cloudflareRecordId String               @map("cloudflare_record_id")
+
+  name               String
+  type               String               // A, AAAA, CNAME
+  content            String               // IP address or CNAME target
+  proxied            Boolean              @default(false)
+  ttl                Int                  @default(1)
+
+  // Exposure check results
+  exposureStatus     DomainExposureStatus @default(PENDING) @map("exposure_status")
+  httpStatusCode     Int?                 @map("http_status_code")
+  responseTimeMs     Int?                 @map("response_time_ms")
+  lastCheckedAt      DateTime?            @map("last_checked_at")
+  checkError         String?              @map("check_error")
+
+  // Origin protection check results
+  originProtected       Boolean?          @map("origin_protected")        // null=not checked/N/A, true=protected, false=exposed
+  originExposureType    String?           @map("origin_exposure_type")    // IP_LEAK, DIRECT_ACCESS, BOTH
+  originExposureDetails String?           @map("origin_exposure_details") // Details about why origin is exposed
+
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+
+  // Relations
+  organization       Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  zone               DnsZone              @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, cloudflareRecordId])
+  @@index([organizationId])
+  @@index([zoneId])
+  @@index([type])
+  @@index([exposureStatus])
+  @@index([originProtected])
+  @@index([name])
+  @@map("dns_records")
+}
+
+model InfraMonitorScanLog {
+  id               String       @id @default(uuid())
+  organizationId   String       @map("organization_id")
+  triggeredBy      String       @default("cron") @map("triggered_by")
+  status           String       @default("running")
+  zonesScanned     Int          @default(0) @map("zones_scanned")
+  recordsScanned   Int          @default(0) @map("records_scanned")
+  totalRecords     Int          @default(0) @map("total_records")
+  checkedRecords   Int          @default(0) @map("checked_records")
+  publicCount      Int          @default(0) @map("public_count")
+  privateCount     Int          @default(0) @map("private_count")
+  unreachableCount Int          @default(0) @map("unreachable_count")
+  errorCount       Int          @default(0) @map("error_count")
+  originExposedCount Int        @default(0) @map("origin_exposed_count")
+  currentDomain    String?      @map("current_domain")
+  error            String?      @db.Text
+  startedAt        DateTime     @default(now()) @map("started_at")
+  completedAt      DateTime?    @map("completed_at")
+
+  createdAt        DateTime     @default(now()) @map("created_at")
+
+  // Relations
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([startedAt])
+  @@map("infra_monitor_scan_logs")
+}
+
+// ============================================
+// GOOGLE WORKSPACE MONITORING
+// ============================================
+
+model GWorkspaceConfig {
+  id                String       @id @default(uuid())
+  organizationId    String       @unique @map("organization_id")
+  serviceAccountKey String       @db.Text @map("service_account_key")
+  adminEmail        String       @map("admin_email")
+  domain            String?
+  scanSchedule      String       @default("0 0 * * *") @map("scan_schedule")
+  isEnabled         Boolean      @default(true) @map("is_enabled")
+
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("gworkspace_configs")
+}
+
+model GWorkspaceUser {
+  id                        String       @id @default(uuid())
+  organizationId            String       @map("organization_id")
+  googleUserId              String       @map("google_user_id")
+  primaryEmail              String       @map("primary_email")
+  fullName                  String       @default("") @map("full_name")
+  isAdmin                   Boolean      @default(false) @map("is_admin")
+  isDelegatedAdmin          Boolean      @default(false) @map("is_delegated_admin")
+  suspended                 Boolean      @default(false)
+  archived                  Boolean      @default(false)
+  isEnrolledIn2Sv           Boolean      @default(false) @map("is_enrolled_in_2sv")
+  isEnforcedIn2Sv           Boolean      @default(false) @map("is_enforced_in_2sv")
+  lastLoginTime             DateTime?    @map("last_login_time")
+  creationTime              DateTime?    @map("creation_time")
+  orgUnitPath               String?      @map("org_unit_path")
+  changePasswordAtNextLogin Boolean      @default(false) @map("change_password_at_next_login")
+
+  createdAt                 DateTime     @default(now()) @map("created_at")
+  updatedAt                 DateTime     @updatedAt @map("updated_at")
+
+  organization              Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, googleUserId])
+  @@index([organizationId])
+  @@index([primaryEmail])
+  @@index([isAdmin])
+  @@index([suspended])
+  @@map("gworkspace_users")
+}
+
+model GWorkspaceGroup {
+  id                    String       @id @default(uuid())
+  organizationId        String       @map("organization_id")
+  googleGroupId         String       @map("google_group_id")
+  email                 String
+  name                  String
+  memberCount           Int          @default(0) @map("member_count")
+  allowExternalMembers  Boolean      @default(false) @map("allow_external_members")
+  whoCanJoin            String?      @map("who_can_join")
+  whoCanPostMessage     String?      @map("who_can_post_message")
+
+  createdAt             DateTime     @default(now()) @map("created_at")
+  updatedAt             DateTime     @updatedAt @map("updated_at")
+
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, googleGroupId])
+  @@index([organizationId])
+  @@map("gworkspace_groups")
+}
+
+model GWorkspaceOAuthApp {
+  id              String       @id @default(uuid())
+  organizationId  String       @map("organization_id")
+  clientId        String       @map("client_id")
+  displayText     String       @map("display_text")
+  anonymous       Boolean      @default(false)
+  scopes          String[]     @default([])
+  userCount       Int          @default(0) @map("user_count")
+  riskLevel       String       @default("LOW") @map("risk_level")
+
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, clientId])
+  @@index([organizationId])
+  @@index([riskLevel])
+  @@map("gworkspace_oauth_apps")
+}
+
+model GWorkspaceMobileDevice {
+  id                  String       @id @default(uuid())
+  organizationId      String       @map("organization_id")
+  googleDeviceId      String       @map("google_device_id")
+  deviceType          String       @default("UNKNOWN") @map("device_type")
+  model               String?
+  os                  String?
+  status              String?
+  compromisedStatus   String?      @map("compromised_status")
+  encryptionStatus    String?      @map("encryption_status")
+  lastSync            DateTime?    @map("last_sync")
+  ownerEmail          String?      @map("owner_email")
+
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, googleDeviceId])
+  @@index([organizationId])
+  @@map("gworkspace_mobile_devices")
+}
+
+model GWorkspaceAlert {
+  id              String       @id @default(uuid())
+  organizationId  String       @map("organization_id")
+  googleAlertId   String       @map("google_alert_id")
+  type            String
+  source          String?
+  severity        String       @default("MEDIUM")
+  status          String       @default("ACTIVE")
+  startTime       DateTime?    @map("start_time")
+  endTime         DateTime?    @map("end_time")
+  description     String?      @db.Text
+
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, googleAlertId])
+  @@index([organizationId])
+  @@index([severity])
+  @@index([status])
+  @@map("gworkspace_alerts")
+}
+
+model GWorkspaceCisCheck {
+  id              String       @id @default(uuid())
+  organizationId  String       @map("organization_id")
+  scanLogId       String       @map("scan_log_id")
+  checkId         String       @map("check_id")
+  category        String
+  title           String
+  description     String?      @db.Text
+  status          String       @default("PENDING")
+  details         String?      @db.Text
+
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scanLog         GWorkspaceScanLog @relation(fields: [scanLogId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([scanLogId])
+  @@index([checkId])
+  @@map("gworkspace_cis_checks")
+}
+
+model GWorkspaceScanLog {
+  id                    String       @id @default(uuid())
+  organizationId        String       @map("organization_id")
+  triggeredBy           String       @default("cron") @map("triggered_by")
+  status                String       @default("running")
+  phase                 String?
+  totalPhases           Int          @default(8) @map("total_phases")
+  completedPhases       Int          @default(0) @map("completed_phases")
+  currentPhaseProgress  Int          @default(0) @map("current_phase_progress")
+  error                 String?      @db.Text
+  startedAt             DateTime     @default(now()) @map("started_at")
+  completedAt           DateTime?    @map("completed_at")
+
+  createdAt             DateTime     @default(now()) @map("created_at")
+
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  cisChecks             GWorkspaceCisCheck[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([startedAt])
+  @@map("gworkspace_scan_logs")
+}
+
+model GWorkspaceOrgUnit {
+  id                String       @id @default(uuid())
+  organizationId    String       @map("organization_id")
+  orgUnitId         String       @map("org_unit_id")
+  name              String
+  description       String?
+  orgUnitPath       String       @map("org_unit_path")
+  parentOrgUnitId   String?      @map("parent_org_unit_id")
+  parentOrgUnitPath String?      @map("parent_org_unit_path")
+  blockInheritance  Boolean      @default(false) @map("block_inheritance")
+  riskTags          String[]     @default([]) @map("risk_tags")
+  riskNotes         String?      @map("risk_notes") @db.Text
+  userCount         Int          @default(0) @map("user_count")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, orgUnitId])
+  @@index([organizationId])
+  @@index([orgUnitPath])
+  @@map("gworkspace_org_units")
+}
+
+model GWorkspaceAdminRole {
+  id                String       @id @default(uuid())
+  organizationId    String       @map("organization_id")
+  googleRoleId      String       @map("google_role_id")
+  roleName          String       @map("role_name")
+  roleDescription   String?      @map("role_description")
+  isSuperAdminRole  Boolean      @default(false) @map("is_super_admin_role")
+  isSystemRole      Boolean      @default(false) @map("is_system_role")
+  privilegeNames    String[]     @default([]) @map("privilege_names")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignments       GWorkspaceRoleAssignment[]
+
+  @@unique([organizationId, googleRoleId])
+  @@index([organizationId])
+  @@map("gworkspace_admin_roles")
+}
+
+model GWorkspaceRoleAssignment {
+  id                String       @id @default(uuid())
+  organizationId    String       @map("organization_id")
+  assignmentId      String       @map("assignment_id")
+  roleId            String       @map("role_id")
+  assignedTo        String       @map("assigned_to")
+  assignedToEmail   String?      @map("assigned_to_email")
+  scopeType         String       @default("CUSTOMER") @map("scope_type")
+  orgUnitId         String?      @map("org_unit_id")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  adminRole         GWorkspaceAdminRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, assignmentId])
+  @@index([organizationId])
+  @@index([assignedTo])
+  @@index([roleId])
+  @@map("gworkspace_role_assignments")
+}
+
+// ==========================================
+// Azure Monitoring Models
+// ==========================================
+
+model AzureConfig {
+  id              String       @id @default(uuid())
+  organizationId  String       @unique @map("organization_id")
+  tenantId        String       @map("tenant_id")
+  clientId        String       @map("client_id")
+  clientSecret    String       @db.Text @map("client_secret")
+  subscriptionId  String       @map("subscription_id")
+  scanSchedule    String       @default("0 2 * * *") @map("scan_schedule")
+  isEnabled       Boolean      @default(true) @map("is_enabled")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("azure_configs")
+}
+
+model AzureUser {
+  id                    String    @id @default(uuid())
+  organizationId        String    @map("organization_id")
+  azureUserId           String    @map("azure_user_id")
+  displayName           String    @map("display_name")
+  userPrincipalName     String    @map("user_principal_name")
+  mail                  String?
+  accountEnabled        Boolean   @default(true) @map("account_enabled")
+  userType              String?   @map("user_type")
+  createdDateTime       DateTime? @map("created_date_time")
+  lastSignInDateTime    DateTime? @map("last_sign_in_date_time")
+  mfaRegistered         Boolean   @default(false) @map("mfa_registered")
+  mfaMethods            String[]  @map("mfa_methods")
+  assignedLicenses      String[]  @map("assigned_licenses")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, azureUserId])
+  @@index([organizationId])
+  @@index([userPrincipalName])
+  @@map("azure_users")
+}
+
+model AzureGroup {
+  id                String    @id @default(uuid())
+  organizationId    String    @map("organization_id")
+  azureGroupId      String    @map("azure_group_id")
+  displayName       String    @map("display_name")
+  mail              String?
+  groupTypes        String[]  @map("group_types")
+  securityEnabled   Boolean   @default(false) @map("security_enabled")
+  mailEnabled       Boolean   @default(false) @map("mail_enabled")
+  membershipRule    String?   @map("membership_rule")
+  memberCount       Int       @default(0) @map("member_count")
+  visibility        String?
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, azureGroupId])
+  @@index([organizationId])
+  @@map("azure_groups")
+}
+
+model AzureAppRegistration {
+  id                      String    @id @default(uuid())
+  organizationId          String    @map("organization_id")
+  appId                   String    @map("app_id")
+  displayName             String    @map("display_name")
+  signInAudience          String?   @map("sign_in_audience")
+  passwordCredentialCount Int       @default(0) @map("password_credential_count")
+  keyCredentialCount      Int       @default(0) @map("key_credential_count")
+  hasExpiredCredentials   Boolean   @default(false) @map("has_expired_credentials")
+  apiPermissions          String[]  @map("api_permissions")
+  createdDateTime         DateTime? @map("created_date_time")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
+
+  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, appId])
+  @@index([organizationId])
+  @@map("azure_app_registrations")
+}
+
+model AzureConditionalAccessPolicy {
+  id                String    @id @default(uuid())
+  organizationId    String    @map("organization_id")
+  policyId          String    @map("policy_id")
+  displayName       String    @map("display_name")
+  state             String
+  conditions        String?   @db.Text
+  grantControls     String?   @db.Text @map("grant_controls")
+  sessionControls   String?   @db.Text @map("session_controls")
+  createdDateTime   DateTime? @map("created_date_time")
+  modifiedDateTime  DateTime? @map("modified_date_time")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, policyId])
+  @@index([organizationId])
+  @@map("azure_conditional_access_policies")
+}
+
+model AzureResource {
+  id                  String    @id @default(uuid())
+  organizationId      String    @map("organization_id")
+  resourceId          String    @map("resource_id")
+  name                String
+  type                String
+  location            String
+  resourceGroup       String    @map("resource_group")
+  provisioningState   String?   @map("provisioning_state")
+  tags                String?   @db.Text
+  properties          String?   @db.Text
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, resourceId])
+  @@index([organizationId])
+  @@index([type])
+  @@map("azure_resources")
+}
+
+model AzureSecurityAlert {
+  id                    String    @id @default(uuid())
+  organizationId        String    @map("organization_id")
+  alertId               String    @map("alert_id")
+  title                 String
+  severity              String
+  status                String
+  category              String?
+  description           String?   @db.Text
+  createdDateTime       DateTime? @map("created_date_time")
+  lastUpdateDateTime    DateTime? @map("last_update_date_time")
+  serviceSource         String?   @map("service_source")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, alertId])
+  @@index([organizationId])
+  @@index([severity])
+  @@map("azure_security_alerts")
+}
+
+model AzureDefenderAssessment {
+  id              String    @id @default(uuid())
+  organizationId  String    @map("organization_id")
+  assessmentId    String    @map("assessment_id")
+  displayName     String    @map("display_name")
+  description     String?   @db.Text
+  severity        String
+  status          String
+  resourceId      String?   @map("resource_id")
+  category        String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, assessmentId])
+  @@index([organizationId])
+  @@index([status])
+  @@map("azure_defender_assessments")
+}
+
+model AzureCisCheck {
+  id              String   @id @default(uuid())
+  organizationId  String   @map("organization_id")
+  scanLogId       String   @map("scan_log_id")
+  checkId         String   @map("check_id")
+  category        String
+  title           String
+  description     String?  @db.Text
+  status          String
+  details         String?  @db.Text
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scanLog         AzureScanLog @relation(fields: [scanLogId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([scanLogId])
+  @@map("azure_cis_checks")
+}
+
+model AzureScanLog {
+  id                    String    @id @default(uuid())
+  organizationId        String    @map("organization_id")
+  triggeredBy           String    @map("triggered_by")
+  status                String    @default("running")
+  phase                 String?
+  totalPhases           Int       @default(8) @map("total_phases")
+  completedPhases       Int       @default(0) @map("completed_phases")
+  currentPhaseProgress  Int       @default(0) @map("current_phase_progress")
+  error                 String?   @db.Text
+  startedAt             DateTime  @default(now()) @map("started_at")
+  completedAt           DateTime? @map("completed_at")
+
+  createdAt             DateTime  @default(now()) @map("created_at")
+
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  cisChecks             AzureCisCheck[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([startedAt])
+  @@map("azure_scan_logs")
 }

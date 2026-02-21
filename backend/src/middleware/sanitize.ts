@@ -22,9 +22,10 @@ const sanitizeObject = (obj: any): any => {
   }
   if (obj !== null && typeof obj === 'object') {
     const sanitized: any = {};
+    // Fields that contain structured data (JSON, API keys, tokens) - skip sanitization
+    const skipFields = ['password', 'serviceaccountkey', 'apitoken', 'cloudflareapittoken', 'privatekey', 'clientsecret', 'tenantid', 'subscriptionid'];
     for (const [key, value] of Object.entries(obj)) {
-      // Skip password fields from sanitization (they'll be hashed anyway)
-      if (key.toLowerCase().includes('password')) {
+      if (skipFields.some(f => key.toLowerCase().includes(f))) {
         sanitized[key] = value;
       } else {
         sanitized[key] = sanitizeObject(value);

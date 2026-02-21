@@ -1,5 +1,6 @@
 import { PrismaClient, Role, ImplementationStatus, SoAStatus, ApprovalStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { riskUsers, ownerEmailMap, risks, riskTreatments, riskRegisterVersions } from './riskSeedData.js';
 
 const prisma = new PrismaClient();
 
@@ -1119,8 +1120,6 @@ async function main() {
         comments,
         controlSource: 'Annex A ISO 27001:2022',
         isApplicable: true,
-        version: 0.1,
-        approvalStatus: ApprovalStatus.DRAFT,
       },
       create: {
         organizationId: org.id,
@@ -1132,58 +1131,249 @@ async function main() {
         documentationReferences,
         comments,
         controlSource: 'Annex A ISO 27001:2022',
-        version: 0.1,
-        approvalStatus: ApprovalStatus.DRAFT,
       },
     });
 
-    // 6. Create initial SoAVersion (v0.1) for each entry
-    // Build the soaData snapshot
-    const soaSnapshot = {
-      controlId: control.controlId,
-      controlName: control.name,
-      controlDescription: control.description,
-      category: control.category,
-      isApplicable: true,
-      justification,
-      status,
-      controlOwner,
-      documentationReferences,
-      comments,
-      controlSource: 'Annex A ISO 27001:2022',
+  }
+  console.log(`Created SoA entries for ${allControls.length} controls`);
+
+  // 6. Create SoA document with initial version
+  const soaDoc = await prisma.soADocument.upsert({
+    where: { organizationId: org.id },
+    update: {},
+    create: {
+      organizationId: org.id,
+      identification: 'ISMS-R-001',
+      title: 'ISMS - Statement of Applicability (SoA)',
+      classification: 'Internal',
       version: 0.1,
       approvalStatus: ApprovalStatus.DRAFT,
-    };
+    },
+  });
+  await prisma.soAVersion.upsert({
+    where: {
+      soaDocumentId_version: { soaDocumentId: soaDoc.id, version: 0.1 },
+    },
+    update: {},
+    create: {
+      soaDocumentId: soaDoc.id,
+      version: 0.1,
+      changeDescription: 'Initial SoA document creation',
+      actor: 'Admin User',
+      actorDesignation: 'ISMS Administrator',
+      action: 'Draft & Review',
+      createdById: admin.id,
+    },
+  });
+  console.log('Created SoA document with initial version');
 
-    // Use upsert to avoid duplicate version entries on re-seed
-    await prisma.soAVersion.upsert({
-      where: {
-        soaEntryId_version: {
-          soaEntryId: soaEntry.id,
-          version: 0.1,
-        },
-      },
-      update: {
-        soaData: soaSnapshot,
-      },
+  // ============================================
+  // RISK REGISTER SEED DATA
+  // ============================================
+
+  // 7. Create risk register users
+  console.log('Creating risk register users...');
+  const riskUserPassword = await bcrypt.hash('user123', 12);
+  const userMap: Record<string, string> = {}; // email -> userId
+
+  for (const u of riskUsers) {
+    const user = await prisma.user.upsert({
+      where: { email: u.email },
+      update: {},
       create: {
-        soaEntryId: soaEntry.id,
-        version: 0.1,
-        changeDescription: 'Initial SoA entry creation',
-        actor: 'Admin User',
-        actorDesignation: 'ISMS Administrator',
-        action: 'Draft & Review',
-        soaData: soaSnapshot,
-        createdById: admin.id,
+        email: u.email,
+        passwordHash: riskUserPassword,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        designation: u.designation,
+        role: Role[u.role],
+        isEmailVerified: true,
+      },
+    });
+    userMap[u.email] = user.id;
+
+    // Add to organization
+    await prisma.organizationMember.upsert({
+      where: {
+        userId_organizationId: { userId: user.id, organizationId: org.id },
+      },
+      update: {},
+      create: {
+        userId: user.id,
+        organizationId: org.id,
+        role: u.role === 'ADMIN' ? 'ADMIN' : u.role === 'LOCAL_ADMIN' ? 'LOCAL_ADMIN' : 'USER',
+        isDefault: true,
       },
     });
   }
-  console.log(`Created SoA entries and version history for ${allControls.length} controls`);
+  console.log(`Created ${riskUsers.length} risk register users`);
+
+  // 8. Create all 72 risks
+  console.log('Creating risk register entries...');
+  const riskIdToDbId: Record<string, string> = {};
+
+  for (const r of risks) {
+    const ownerEmail = ownerEmailMap[r.owner];
+    const ownerId = ownerEmail ? userMap[ownerEmail] : admin.id;
+    const inherentRisk = r.inhP * r.inhI;
+    const residualRisk = r.resP * r.resI;
+
+    const risk = await prisma.risk.upsert({
+      where: {
+        organizationId_riskId: { organizationId: org.id, riskId: r.riskId },
+      },
+      update: {},
+      create: {
+        organizationId: org.id,
+        riskId: r.riskId,
+        title: r.title,
+        description: r.description,
+        category: r.category,
+        version: 1.0,
+        approvalStatus: ApprovalStatus.APPROVED,
+        likelihood: r.inhP,
+        impact: r.inhI,
+        inherentRisk,
+        residualProbability: r.resP,
+        residualImpact: r.resI,
+        residualRisk,
+        controlDescription: r.ctrlDesc,
+        controlsReference: r.ctrls.join(', '),
+        treatment: r.treatment === 'ACCEPT' ? 'ACCEPT' : 'MITIGATE',
+        status: 'MONITORING',
+        ownerId,
+        createdById: userMap['karthik.k@cdmx.in'] || admin.id,
+        reviewedAt: new Date('2026-02-03'),
+        comments: r.comments || null,
+        affectsConfidentiality: r.cia[0],
+        affectsIntegrity: r.cia[1],
+        affectsAvailability: r.cia[2],
+        createdAt: new Date(r.date),
+      },
+    });
+    riskIdToDbId[r.riskId] = risk.id;
+
+    // Link controls via RiskControl join table
+    for (const ctrlId of r.ctrls) {
+      const control = await prisma.control.findFirst({
+        where: { organizationId: org.id, controlId: ctrlId },
+      });
+      if (control) {
+        await prisma.riskControl.upsert({
+          where: {
+            riskId_controlId: { riskId: risk.id, controlId: control.id },
+          },
+          update: {},
+          create: { riskId: risk.id, controlId: control.id },
+        });
+      }
+    }
+
+    // Create initial version entry
+    await prisma.riskVersion.upsert({
+      where: {
+        riskId_version: { riskId: risk.id, version: 1.0 },
+      },
+      update: {},
+      create: {
+        riskId: risk.id,
+        version: 1.0,
+        changeDescription: 'Initial risk assessment',
+        actor: 'Karthik Kanthaswamy',
+        actorDesignation: 'CISO',
+        action: 'Risk Assessment',
+        designation: 'CISO',
+        riskData: {
+          riskId: r.riskId,
+          title: r.title,
+          likelihood: r.inhP,
+          impact: r.inhI,
+          inherentRisk,
+          residualProbability: r.resP,
+          residualImpact: r.resI,
+          residualRisk,
+          treatment: r.treatment,
+          status: 'MONITORING',
+          approvalStatus: 'APPROVED',
+        },
+        createdById: userMap['karthik.k@cdmx.in'] || admin.id,
+        createdAt: new Date(r.date),
+      },
+    });
+  }
+  console.log(`Created ${risks.length} risks with control links and version history`);
+
+  // 9. Create risk treatment entries
+  console.log('Creating risk treatments...');
+  for (const t of riskTreatments) {
+    const dbRiskId = riskIdToDbId[t.riskId];
+    if (!dbRiskId) continue;
+
+    await prisma.riskTreatment.create({
+      data: {
+        riskId: dbRiskId,
+        residualProbability: t.resP,
+        residualImpact: t.resI,
+        residualRisk: t.resRisk,
+        riskResponse: t.response,
+        controlDescription: t.ctrlDesc,
+        controlImplementationDate: t.implDate ? new Date(t.implDate) : null,
+        treatmentTimeInDays: t.days,
+        comments: t.comments,
+      },
+    });
+  }
+  console.log(`Created ${riskTreatments.length} risk treatment entries`);
+
+  // 10. Create risk register document with version history
+  console.log('Creating risk register document...');
+  const cooId = userMap['nestinka@cdmx.in'];
+  const ceoId = userMap['mayur@cdmx.in'];
+
+  const riskDoc = await prisma.riskRegisterDocument.upsert({
+    where: { organizationId: org.id },
+    update: {},
+    create: {
+      organizationId: org.id,
+      identification: 'ISMS-R-004',
+      title: 'ISMS Org Level Risk Register',
+      classification: 'Internal',
+      version: 7.0,
+      approvalStatus: ApprovalStatus.APPROVED,
+      reviewerId: cooId,
+      approverId: ceoId,
+    },
+  });
+
+  for (const v of riskRegisterVersions) {
+    const actorUserId = userMap[v.actorEmail];
+    await prisma.riskRegisterVersion.upsert({
+      where: {
+        riskRegisterDocumentId_version: { riskRegisterDocumentId: riskDoc.id, version: v.version },
+      },
+      update: {},
+      create: {
+        riskRegisterDocumentId: riskDoc.id,
+        version: v.version,
+        changeDescription: v.desc,
+        actor: v.actor,
+        actorDesignation: v.actorDesig,
+        action: v.action,
+        createdById: actorUserId,
+        createdAt: new Date(v.date),
+      },
+    });
+  }
+  console.log(`Created risk register document (v7.0) with ${riskRegisterVersions.length} version entries`);
 
   console.log('\nSeeding completed!');
   console.log('\nLogin credentials:');
   console.log('  Email: admin@isms.local');
   console.log('  Password: admin123');
+  console.log('\nRisk register users (password: user123):');
+  for (const u of riskUsers) {
+    console.log(`  ${u.firstName} ${u.lastName} (${u.designation}): ${u.email}`);
+  }
 }
 
 main()

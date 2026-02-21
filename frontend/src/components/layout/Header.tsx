@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Bell, LogOut, Settings, User, Building2, SendHorizontal, CheckCircle, XCircle, ShieldCheck } from 'lucide-react'
+import { Bell, LogOut, Settings, User, SendHorizontal, CheckCircle, XCircle, ShieldCheck } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
@@ -35,14 +35,10 @@ function timeAgo(date: string) {
 }
 
 export function Header() {
-  const { user, logout, currentOrganizationId, setCurrentOrganization } = useAuthStore()
+  const { user, logout, currentOrganizationId } = useAuthStore()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [notifOpen, setNotifOpen] = useState(false)
-
-  const currentOrg = user?.organizationMemberships.find(
-    (m) => m.organizationId === currentOrganizationId
-  )?.organization
 
   const handleLogout = async () => {
     await logout()
@@ -86,39 +82,7 @@ export function Header() {
   }
 
   return (
-    <header className="flex h-16 items-center justify-between border-b bg-card px-6">
-      {/* Organization Selector */}
-      <div className="flex items-center gap-4">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="gap-2">
-              <Building2 className="h-4 w-4" />
-              {currentOrg?.name || 'Select Organization'}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuLabel>Organizations</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {user?.organizationMemberships.map((membership) => (
-              <DropdownMenuItem
-                key={membership.organizationId}
-                onClick={() => setCurrentOrganization(membership.organizationId)}
-                className={
-                  membership.organizationId === currentOrganizationId
-                    ? 'bg-accent'
-                    : ''
-                }
-              >
-                {membership.organization.name}
-                <span className="ml-2 text-xs text-muted-foreground">
-                  ({membership.role})
-                </span>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
+    <header className="flex h-16 items-center justify-end border-b bg-card px-6">
       {/* Right side */}
       <div className="flex items-center gap-4">
         {/* Notifications */}

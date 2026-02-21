@@ -88,23 +88,33 @@ export const riskApi = {
   delete: (id: string) => axiosInstance.delete(`/risks/${id}`),
   heatmap: (organizationId: string) => axiosInstance.get('/risks/heatmap', { params: { organizationId } }),
   linkControls: (id: string, controlIds: string[]) => axiosInstance.post(`/risks/${id}/controls`, { controlIds }),
-  submitForReview: (id: string, changeDescription?: string, versionBump?: string) =>
-    axiosInstance.post(`/risks/${id}/submit-for-review`, { changeDescription, versionBump }),
-  firstApproval: (id: string, comments?: string) =>
-    axiosInstance.post(`/risks/${id}/first-approval`, { comments }),
-  secondApproval: (id: string, comments?: string) =>
-    axiosInstance.post(`/risks/${id}/second-approval`, { comments }),
-  reject: (id: string, reason: string) =>
-    axiosInstance.post(`/risks/${id}/reject`, { reason }),
   retire: (id: string, reason: string) =>
     axiosInstance.post(`/risks/${id}/retire`, { reason }),
   getTreatment: (id: string) => axiosInstance.get(`/risks/${id}/treatment`),
   createTreatment: (id: string, data: any) => axiosInstance.post(`/risks/${id}/treatment`, data),
-  getVersions: (id: string) => axiosInstance.get(`/risks/${id}/versions`),
-  pendingApprovals: (organizationId: string) =>
-    axiosInstance.get('/risks/pending-approvals/list', { params: { organizationId } }),
   retiredList: (organizationId: string) =>
     axiosInstance.get('/risks/retired/list', { params: { organizationId } }),
+  // Document-level endpoints
+  getDocument: (organizationId: string) =>
+    axiosInstance.get('/risks/document', { params: { organizationId } }),
+  updateDocument: (organizationId: string, data: any) =>
+    axiosInstance.patch('/risks/document', { organizationId, ...data }),
+  getDocumentVersions: (organizationId: string) =>
+    axiosInstance.get('/risks/document/versions', { params: { organizationId } }),
+  submitForReview: (organizationId: string, changeDescription?: string, versionBump?: string) =>
+    axiosInstance.post('/risks/document/submit-for-review', { organizationId, changeDescription, versionBump }),
+  firstApproval: (organizationId: string, comments?: string) =>
+    axiosInstance.post('/risks/document/first-approval', { organizationId, comments }),
+  secondApproval: (organizationId: string, comments?: string) =>
+    axiosInstance.post('/risks/document/second-approval', { organizationId, comments }),
+  reject: (organizationId: string, reason: string) =>
+    axiosInstance.post('/risks/document/reject', { organizationId, reason }),
+  newRevision: (organizationId: string, changeDescription?: string, versionBump?: string) =>
+    axiosInstance.post('/risks/document/new-revision', { organizationId, changeDescription, versionBump }),
+  updateVersionDescription: (versionId: string, changeDescription: string) =>
+    axiosInstance.patch(`/risks/document/versions/${versionId}`, { changeDescription }),
+  discardRevision: (organizationId: string) =>
+    axiosInstance.post('/risks/document/discard-revision', { organizationId }),
 }
 
 export const controlApi = {
@@ -364,6 +374,7 @@ export const checklistApi = {
 
 export const userApi = {
   updateProfile: (data: any) => axiosInstance.patch('/users/profile', data),
+  updateUser: (userId: string, data: any) => axiosInstance.patch(`/users/${userId}`, data),
   changePassword: (data: { currentPassword: string; newPassword: string }) =>
     axiosInstance.post('/auth/change-password', data),
 }
@@ -377,6 +388,110 @@ export const notificationApi = {
     axiosInstance.patch(`/notifications/${id}/read`),
   markAllRead: (organizationId: string) =>
     axiosInstance.post('/notifications/mark-all-read', { organizationId }),
+}
+
+export const infrastructureApi = {
+  getConfig: (organizationId: string) =>
+    axiosInstance.get('/infrastructure/config', { params: { organizationId } }),
+  saveConfig: (data: { organizationId: string; cloudflareApiToken: string; httpCheckProxy?: string; scanSchedule?: string; isEnabled?: boolean }) =>
+    axiosInstance.post('/infrastructure/config', data),
+  stats: (organizationId: string) =>
+    axiosInstance.get('/infrastructure/stats', { params: { organizationId } }),
+  records: (params: {
+    organizationId: string;
+    search?: string;
+    type?: string;
+    exposureStatus?: string;
+    proxied?: string;
+    originProtected?: string;
+    zoneId?: string;
+    page?: number;
+    limit?: number;
+  }) => axiosInstance.get('/infrastructure/records', { params }),
+  getRecord: (id: string, organizationId: string) =>
+    axiosInstance.get(`/infrastructure/records/${id}`, { params: { organizationId } }),
+  zones: (organizationId: string) =>
+    axiosInstance.get('/infrastructure/zones', { params: { organizationId } }),
+  triggerScan: (organizationId: string) =>
+    axiosInstance.post('/infrastructure/scan', { organizationId }),
+  checkRecord: (id: string, organizationId: string) =>
+    axiosInstance.post(`/infrastructure/records/${id}/check`, { organizationId }),
+  scanStatus: (organizationId: string) =>
+    axiosInstance.get('/infrastructure/scan-status', { params: { organizationId } }),
+  scanHistory: (organizationId: string, limit?: number) =>
+    axiosInstance.get('/infrastructure/scan-history', { params: { organizationId, limit } }),
+  exportReport: (organizationId: string) =>
+    axiosInstance.get('/infrastructure/export', { params: { organizationId }, responseType: 'blob' }),
+}
+
+export const googleWorkspaceApi = {
+  getConfig: (organizationId: string) =>
+    axiosInstance.get('/google-workspace/config', { params: { organizationId } }),
+  saveConfig: (data: { organizationId: string; serviceAccountKey: string; adminEmail: string; domain?: string; scanSchedule?: string; isEnabled?: boolean }) =>
+    axiosInstance.post('/google-workspace/config', data),
+  stats: (organizationId: string) =>
+    axiosInstance.get('/google-workspace/stats', { params: { organizationId } }),
+  users: (params: { organizationId: string; search?: string; admin?: string; suspended?: string; twoFa?: string; orgUnitPath?: string; page?: number; limit?: number }) =>
+    axiosInstance.get('/google-workspace/users', { params }),
+  groups: (params: { organizationId: string; search?: string; externalMembers?: string; page?: number; limit?: number }) =>
+    axiosInstance.get('/google-workspace/groups', { params }),
+  oauthApps: (params: { organizationId: string; riskLevel?: string; verified?: string; page?: number; limit?: number }) =>
+    axiosInstance.get('/google-workspace/oauth-apps', { params }),
+  devices: (params: { organizationId: string; type?: string; status?: string; compromised?: string; page?: number; limit?: number }) =>
+    axiosInstance.get('/google-workspace/devices', { params }),
+  alerts: (params: { organizationId: string; severity?: string; status?: string; type?: string; page?: number; limit?: number }) =>
+    axiosInstance.get('/google-workspace/alerts', { params }),
+  cisChecks: (organizationId: string) =>
+    axiosInstance.get('/google-workspace/cis-checks', { params: { organizationId } }),
+  triggerScan: (organizationId: string) =>
+    axiosInstance.post('/google-workspace/scan', { organizationId }),
+  scanStatus: (organizationId: string) =>
+    axiosInstance.get('/google-workspace/scan-status', { params: { organizationId } }),
+  scanHistory: (organizationId: string, limit?: number) =>
+    axiosInstance.get('/google-workspace/scan-history', { params: { organizationId, limit } }),
+  exportReport: (organizationId: string, type?: string) =>
+    axiosInstance.get('/google-workspace/export', { params: { organizationId, type }, responseType: 'blob' }),
+  orgUnits: (params: { organizationId: string; search?: string; hasRiskTags?: string; page?: number; limit?: number }) =>
+    axiosInstance.get('/google-workspace/org-units', { params }),
+  updateOrgUnitRiskTags: (id: string, data: { riskTags?: string[]; riskNotes?: string }) =>
+    axiosInstance.patch(`/google-workspace/org-units/${id}/risk-tags`, data),
+  adminRoles: (organizationId: string) =>
+    axiosInstance.get('/google-workspace/admin-roles', { params: { organizationId } }),
+  roleAssignments: (params: { organizationId: string; userId?: string }) =>
+    axiosInstance.get('/google-workspace/role-assignments', { params }),
+}
+
+export const azureApi = {
+  getConfig: (organizationId: string) =>
+    axiosInstance.get('/azure/config', { params: { organizationId } }),
+  saveConfig: (data: { organizationId: string; tenantId: string; clientId: string; clientSecret?: string; subscriptionId: string; scanSchedule?: string; isEnabled?: boolean }) =>
+    axiosInstance.post('/azure/config', data),
+  stats: (organizationId: string) =>
+    axiosInstance.get('/azure/stats', { params: { organizationId } }),
+  users: (params: { organizationId: string; search?: string; enabled?: string; mfa?: string; userType?: string; page?: number; limit?: number }) =>
+    axiosInstance.get('/azure/users', { params }),
+  groups: (params: { organizationId: string; search?: string; type?: string; visibility?: string; page?: number; limit?: number }) =>
+    axiosInstance.get('/azure/groups', { params }),
+  apps: (params: { organizationId: string; search?: string; audience?: string; expired?: string; page?: number; limit?: number }) =>
+    axiosInstance.get('/azure/apps', { params }),
+  conditionalAccess: (params: { organizationId: string; state?: string; page?: number; limit?: number }) =>
+    axiosInstance.get('/azure/conditional-access', { params }),
+  resources: (params: { organizationId: string; search?: string; type?: string; resourceGroup?: string; location?: string; page?: number; limit?: number }) =>
+    axiosInstance.get('/azure/resources', { params }),
+  securityAlerts: (params: { organizationId: string; severity?: string; status?: string; page?: number; limit?: number }) =>
+    axiosInstance.get('/azure/security-alerts', { params }),
+  defender: (params: { organizationId: string; severity?: string; status?: string; page?: number; limit?: number }) =>
+    axiosInstance.get('/azure/defender', { params }),
+  cisChecks: (organizationId: string) =>
+    axiosInstance.get('/azure/cis-checks', { params: { organizationId } }),
+  triggerScan: (organizationId: string) =>
+    axiosInstance.post('/azure/scan', { organizationId }),
+  scanStatus: (organizationId: string) =>
+    axiosInstance.get('/azure/scan-status', { params: { organizationId } }),
+  scanHistory: (organizationId: string, limit?: number) =>
+    axiosInstance.get('/azure/scan-history', { params: { organizationId, limit } }),
+  exportReport: (organizationId: string, type?: string) =>
+    axiosInstance.get('/azure/export', { params: { organizationId, type }, responseType: 'blob' }),
 }
 
 // Unified API object for components - wraps raw API calls with response extraction
@@ -818,6 +933,192 @@ export const api = {
     aiAssistRequirement: async (id: string, reqId: string, question?: string) => {
       const response = await assessmentApi.aiAssistRequirement(id, reqId, question)
       return response.data?.data
+    },
+  },
+  infrastructure: {
+    getConfig: async (organizationId: string) => {
+      const response = await infrastructureApi.getConfig(organizationId)
+      return response.data?.data
+    },
+    saveConfig: async (data: { organizationId: string; cloudflareApiToken: string; httpCheckProxy?: string; scanSchedule?: string; isEnabled?: boolean }) => {
+      const response = await infrastructureApi.saveConfig(data)
+      return response.data?.data
+    },
+    stats: async (organizationId: string) => {
+      const response = await infrastructureApi.stats(organizationId)
+      return response.data?.data
+    },
+    records: async (organizationId: string, params?: {
+      search?: string;
+      type?: string;
+      exposureStatus?: string;
+      proxied?: string;
+      zoneId?: string;
+      page?: number;
+      limit?: number;
+    }) => {
+      const response = await infrastructureApi.records({ organizationId, ...params })
+      return response.data
+    },
+    getRecord: async (id: string, organizationId: string) => {
+      const response = await infrastructureApi.getRecord(id, organizationId)
+      return response.data?.data
+    },
+    zones: async (organizationId: string) => {
+      const response = await infrastructureApi.zones(organizationId)
+      return response.data?.data || []
+    },
+    triggerScan: async (organizationId: string) => {
+      const response = await infrastructureApi.triggerScan(organizationId)
+      return response.data
+    },
+    checkRecord: async (id: string, organizationId: string) => {
+      const response = await infrastructureApi.checkRecord(id, organizationId)
+      return response.data?.data
+    },
+    scanStatus: async (organizationId: string) => {
+      const response = await infrastructureApi.scanStatus(organizationId)
+      return response.data?.data
+    },
+    scanHistory: async (organizationId: string, limit?: number) => {
+      const response = await infrastructureApi.scanHistory(organizationId, limit)
+      return response.data?.data || []
+    },
+    exportReport: async (organizationId: string) => {
+      const response = await infrastructureApi.exportReport(organizationId)
+      return response.data
+    },
+  },
+  googleWorkspace: {
+    getConfig: async (organizationId: string) => {
+      const response = await googleWorkspaceApi.getConfig(organizationId)
+      return response.data?.data
+    },
+    saveConfig: async (data: { organizationId: string; serviceAccountKey: string; adminEmail: string; domain?: string; scanSchedule?: string; isEnabled?: boolean }) => {
+      const response = await googleWorkspaceApi.saveConfig(data)
+      return response.data?.data
+    },
+    stats: async (organizationId: string) => {
+      const response = await googleWorkspaceApi.stats(organizationId)
+      return response.data?.data
+    },
+    users: async (organizationId: string, params?: any) => {
+      const response = await googleWorkspaceApi.users({ organizationId, ...params })
+      return response.data
+    },
+    groups: async (organizationId: string, params?: any) => {
+      const response = await googleWorkspaceApi.groups({ organizationId, ...params })
+      return response.data
+    },
+    oauthApps: async (organizationId: string, params?: any) => {
+      const response = await googleWorkspaceApi.oauthApps({ organizationId, ...params })
+      return response.data
+    },
+    devices: async (organizationId: string, params?: any) => {
+      const response = await googleWorkspaceApi.devices({ organizationId, ...params })
+      return response.data
+    },
+    alerts: async (organizationId: string, params?: any) => {
+      const response = await googleWorkspaceApi.alerts({ organizationId, ...params })
+      return response.data
+    },
+    cisChecks: async (organizationId: string) => {
+      const response = await googleWorkspaceApi.cisChecks(organizationId)
+      return response.data?.data || []
+    },
+    triggerScan: async (organizationId: string) => {
+      const response = await googleWorkspaceApi.triggerScan(organizationId)
+      return response.data
+    },
+    scanStatus: async (organizationId: string) => {
+      const response = await googleWorkspaceApi.scanStatus(organizationId)
+      return response.data?.data
+    },
+    scanHistory: async (organizationId: string, limit?: number) => {
+      const response = await googleWorkspaceApi.scanHistory(organizationId, limit)
+      return response.data?.data || []
+    },
+    exportReport: async (organizationId: string, type?: string) => {
+      const response = await googleWorkspaceApi.exportReport(organizationId, type)
+      return response.data
+    },
+    orgUnits: async (organizationId: string, params?: any) => {
+      const response = await googleWorkspaceApi.orgUnits({ organizationId, ...params })
+      return response.data
+    },
+    updateOrgUnitRiskTags: async (_organizationId: string, ouId: string, data: { riskTags?: string[]; riskNotes?: string }) => {
+      const response = await googleWorkspaceApi.updateOrgUnitRiskTags(ouId, data)
+      return response.data?.data
+    },
+    adminRoles: async (organizationId: string) => {
+      const response = await googleWorkspaceApi.adminRoles(organizationId)
+      return response.data?.data || []
+    },
+    roleAssignments: async (organizationId: string, params?: any) => {
+      const response = await googleWorkspaceApi.roleAssignments({ organizationId, ...params })
+      return response.data?.data || []
+    },
+  },
+  azure: {
+    getConfig: async (organizationId: string) => {
+      const response = await azureApi.getConfig(organizationId)
+      return response.data?.data
+    },
+    saveConfig: async (data: { organizationId: string; tenantId: string; clientId: string; clientSecret?: string; subscriptionId: string; scanSchedule?: string; isEnabled?: boolean }) => {
+      const response = await azureApi.saveConfig(data)
+      return response.data?.data
+    },
+    stats: async (organizationId: string) => {
+      const response = await azureApi.stats(organizationId)
+      return response.data?.data
+    },
+    users: async (organizationId: string, params?: any) => {
+      const response = await azureApi.users({ organizationId, ...params })
+      return response.data
+    },
+    groups: async (organizationId: string, params?: any) => {
+      const response = await azureApi.groups({ organizationId, ...params })
+      return response.data
+    },
+    apps: async (organizationId: string, params?: any) => {
+      const response = await azureApi.apps({ organizationId, ...params })
+      return response.data
+    },
+    conditionalAccess: async (organizationId: string, params?: any) => {
+      const response = await azureApi.conditionalAccess({ organizationId, ...params })
+      return response.data
+    },
+    resources: async (organizationId: string, params?: any) => {
+      const response = await azureApi.resources({ organizationId, ...params })
+      return response.data
+    },
+    securityAlerts: async (organizationId: string, params?: any) => {
+      const response = await azureApi.securityAlerts({ organizationId, ...params })
+      return response.data
+    },
+    defender: async (organizationId: string, params?: any) => {
+      const response = await azureApi.defender({ organizationId, ...params })
+      return response.data
+    },
+    cisChecks: async (organizationId: string) => {
+      const response = await azureApi.cisChecks(organizationId)
+      return response.data?.data || []
+    },
+    triggerScan: async (organizationId: string) => {
+      const response = await azureApi.triggerScan(organizationId)
+      return response.data
+    },
+    scanStatus: async (organizationId: string) => {
+      const response = await azureApi.scanStatus(organizationId)
+      return response.data?.data
+    },
+    scanHistory: async (organizationId: string, limit?: number) => {
+      const response = await azureApi.scanHistory(organizationId, limit)
+      return response.data?.data || []
+    },
+    exportReport: async (organizationId: string, type?: string) => {
+      const response = await azureApi.exportReport(organizationId, type)
+      return response.data
     },
   },
   audit: {
