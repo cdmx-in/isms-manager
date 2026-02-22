@@ -111,7 +111,6 @@ export function Sidebar() {
 
   const switchOrg = (orgId: string) => {
     setCurrentOrganization(orgId)
-    // Reload page to refresh all data for new org
     window.location.reload()
   }
 
@@ -122,40 +121,44 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'flex flex-col border-r bg-card transition-all duration-300',
+        'flex flex-col bg-sidebar text-sidebar-foreground transition-all duration-300',
         collapsed ? 'w-16' : 'w-64'
       )}
     >
       {/* Logo */}
-      <div className="flex h-16 items-center justify-between border-b px-4">
+      <div className="flex h-16 items-center justify-between border-b border-sidebar-border px-4">
         {!collapsed && (
           <Link to="/dashboard" className="flex items-center gap-2">
-            <Shield className="h-8 w-8 text-primary" />
-            <span className="text-lg font-bold">Compliance Manager</span>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/20">
+              <Shield className="h-5 w-5 text-blue-400" />
+            </div>
+            <span className="text-lg font-bold text-sidebar-foreground">Compliance</span>
           </Link>
         )}
         {collapsed && (
           <Link to="/dashboard" className="mx-auto">
-            <Shield className="h-8 w-8 text-primary" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/20">
+              <Shield className="h-5 w-5 text-blue-400" />
+            </div>
           </Link>
         )}
       </div>
 
       {/* Organization Switcher */}
       {!collapsed && memberships.length > 0 && (
-        <div className="px-3 py-2 border-b">
+        <div className="px-3 py-2 border-b border-sidebar-border">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="w-full justify-between h-9 text-sm font-medium">
+              <Button variant="ghost" className="w-full justify-between h-9 text-sm font-medium text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground border border-sidebar-border">
                 <div className="flex items-center gap-2 truncate">
                   {currentOrg?.organization?.logo ? (
                     <img src={currentOrg.organization.logo} alt="" className="h-5 w-5 flex-shrink-0 rounded object-contain" />
                   ) : (
-                    <Building2 className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                    <Building2 className="h-4 w-4 flex-shrink-0 text-sidebar-muted-foreground" />
                   )}
                   <span className="truncate">{currentOrg?.organization?.name || 'Select Org'}</span>
                 </div>
-                <ChevronsUpDown className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+                <ChevronsUpDown className="h-3.5 w-3.5 flex-shrink-0 text-sidebar-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-[232px]">
@@ -177,10 +180,10 @@ export function Sidebar() {
         </div>
       )}
       {collapsed && memberships.length > 1 && (
-        <div className="px-2 py-2 border-b flex justify-center">
+        <div className="px-2 py-2 border-b border-sidebar-border flex justify-center">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8" title={currentOrg?.organization?.name}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-sidebar-foreground hover:bg-sidebar-accent" title={currentOrg?.organization?.name}>
                 {currentOrg?.organization?.logo ? (
                   <img src={currentOrg.organization.logo} alt="" className="h-5 w-5 rounded object-contain" />
                 ) : (
@@ -220,8 +223,8 @@ export function Sidebar() {
                   className={cn(
                     'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                     isActive
-                      ? 'bg-primary/10 text-primary'
-                      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                      ? 'bg-blue-500/15 text-blue-400'
+                      : 'text-sidebar-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
                   )}
                   title={collapsed ? item.name : undefined}
                 >
@@ -237,7 +240,7 @@ export function Sidebar() {
                   )}
                 </button>
                 {!collapsed && isExpanded && (
-                  <div className="ml-4 mt-1 space-y-1 border-l pl-3">
+                  <div className="ml-4 mt-1 space-y-1 border-l border-sidebar-border pl-3">
                     {item.children!.map((child) => {
                       const isChildActive = location.pathname === child.href || location.pathname.startsWith(child.href + '/')
                       return (
@@ -247,8 +250,8 @@ export function Sidebar() {
                           className={cn(
                             'flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
                             isChildActive
-                              ? 'bg-primary text-primary-foreground'
-                              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                              ? 'bg-blue-500 text-white'
+                              : 'text-sidebar-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
                           )}
                         >
                           <child.icon className="h-4 w-4 flex-shrink-0" />
@@ -269,8 +272,8 @@ export function Sidebar() {
               className={cn(
                 'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                 isActive
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                  ? 'bg-blue-500 text-white'
+                  : 'text-sidebar-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
               )}
               title={collapsed ? item.name : undefined}
             >
@@ -282,11 +285,11 @@ export function Sidebar() {
       </nav>
 
       {/* Collapse button */}
-      <div className="border-t p-2">
+      <div className="border-t border-sidebar-border p-2">
         <Button
           variant="ghost"
           size="sm"
-          className="w-full justify-center"
+          className="w-full justify-center text-sidebar-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
           onClick={() => setCollapsed(!collapsed)}
         >
           {collapsed ? (
