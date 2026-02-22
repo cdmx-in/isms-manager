@@ -1,10 +1,30 @@
 import { Router } from 'express';
+import multer from 'multer';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs/promises';
 import { prisma } from '../index.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { authenticate, requirePermission, AuthenticatedRequest } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { createOrganizationValidator, uuidParam, paginationQuery } from '../middleware/validators.js';
 import { createAuditLog } from '../services/audit.service.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const LOGOS_DIR = path.join(__dirname, '..', '..', 'uploads', 'logos');
+
+const logoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'].includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PNG, JPEG, WebP, and SVG images are allowed'));
+    }
+  },
+});
 
 const router = Router();
 
@@ -191,7 +211,7 @@ router.patch(
   asyncHandler(async (req, res) => {
     const { organizationId } = req.params;
     const authReq = req as AuthenticatedRequest;
-    const { name, description, logo, riskAcceptConfidentiality, riskAcceptIntegrity, riskAcceptAvailability } = req.body;
+    const { name, description, logo, riskAcceptConfidentiality, riskAcceptIntegrity, riskAcceptAvailability, enabledServices } = req.body;
 
     const existingOrg = await prisma.organization.findUnique({ where: { id: organizationId } });
     if (!existingOrg) {
@@ -205,6 +225,11 @@ router.patch(
     if (riskAcceptConfidentiality !== undefined) updateData.riskAcceptConfidentiality = riskAcceptConfidentiality;
     if (riskAcceptIntegrity !== undefined) updateData.riskAcceptIntegrity = riskAcceptIntegrity;
     if (riskAcceptAvailability !== undefined) updateData.riskAcceptAvailability = riskAcceptAvailability;
+    if (enabledServices !== undefined) {
+      const validServices = ['cloudflare', 'google_workspace', 'azure'];
+      const filtered = (enabledServices as string[]).filter(s => validServices.includes(s));
+      updateData.enabledServices = filtered;
+    }
 
     const organization = await prisma.organization.update({
       where: { id: organizationId },
@@ -227,6 +252,61 @@ router.patch(
       success: true,
       data: organization,
     });
+  })
+);
+
+// Upload organization logo (saved to disk under uploads/logos/)
+router.post(
+  '/:organizationId/logo',
+  authenticate,
+  uuidParam('organizationId'),
+  validate,
+  requirePermission('settings', 'edit'),
+  logoUpload.single('logo'),
+  asyncHandler(async (req, res) => {
+    const { organizationId } = req.params;
+    const authReq = req as AuthenticatedRequest;
+
+    if (!req.file) throw new AppError('Logo file is required', 400);
+
+    const existingOrg = await prisma.organization.findUnique({ where: { id: organizationId } });
+    if (!existingOrg) throw new AppError('Organization not found', 404);
+
+    // Ensure logos directory exists
+    await fs.mkdir(LOGOS_DIR, { recursive: true });
+
+    // Delete old logo file if exists
+    if (existingOrg.logo) {
+      const oldPath = path.join(__dirname, '..', '..', existingOrg.logo.replace(/^\/uploads\//, 'uploads/'));
+      try { await fs.unlink(oldPath); } catch { /* ignore if missing */ }
+    }
+
+    // Save new logo to disk
+    const ext = path.extname(req.file.originalname) || '.png';
+    const filename = `${organizationId}${ext}`;
+    const filePath = path.join(LOGOS_DIR, filename);
+    await fs.writeFile(filePath, req.file.buffer);
+
+    const logoUrl = `/uploads/logos/${filename}`;
+
+    await prisma.organization.update({
+      where: { id: organizationId },
+      data: { logo: logoUrl },
+    });
+
+    await createAuditLog({
+      userId: authReq.user.id,
+      organizationId,
+      action: 'UPDATE',
+      entityType: 'Organization',
+      entityId: organizationId,
+      oldValues: { logo: existingOrg.logo },
+      newValues: { logo: logoUrl },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+
+    res.json({ success: true, data: { logo: logoUrl } });
   })
 );
 

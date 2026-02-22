@@ -125,6 +125,7 @@ router.get(
                 name: true,
                 slug: true,
                 logo: true,
+                enabledServices: true,
               },
             },
             orgRole: {

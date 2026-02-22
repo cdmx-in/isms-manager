@@ -173,6 +173,8 @@ export function ExemptionsPage() {
   const [rejectReason, setRejectReason] = useState('')
   const [revokeReason, setRevokeReason] = useState('')
   const [renewData, setRenewData] = useState({ validUntil: '', reviewDate: '', justification: '', comments: '' })
+  const [editTouched, setEditTouched] = useState<Record<string, boolean>>({})
+  const markEditTouched = (field: string) => setEditTouched(prev => ({ ...prev, [field]: true }))
 
   const activeFilterCount = [search, statusFilter, approvalFilter, frameworkFilter, typeFilter].filter(Boolean).length
 
@@ -353,6 +355,39 @@ export function ExemptionsPage() {
     })
   }
 
+  // Edit form validation
+  const editErrors: Record<string, string> = {}
+  if (editTouched.title && !formData.title.trim()) {
+    editErrors.title = 'Title is required'
+  } else if (editTouched.title && formData.title.trim().length < 10) {
+    editErrors.title = 'Title should be at least 10 characters'
+  } else if (formData.title.length > 200) {
+    editErrors.title = 'Title must not exceed 200 characters'
+  }
+  if (editTouched.justification && !formData.justification.trim()) {
+    editErrors.justification = 'Business justification is required'
+  } else if (editTouched.justification && formData.justification.trim().length < 30) {
+    editErrors.justification = 'Provide at least 30 characters of justification'
+  }
+  if (editTouched.validUntil && !formData.validUntil) {
+    editErrors.validUntil = 'Expiry date is required'
+  } else if (formData.validUntil) {
+    const until = new Date(formData.validUntil)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    if (until <= today) {
+      editErrors.validUntil = 'Expiry date must be in the future'
+    }
+  }
+  if (formData.validFrom && formData.validUntil && new Date(formData.validFrom) >= new Date(formData.validUntil)) {
+    editErrors.validFrom = 'Start date must be before expiry date'
+  }
+  if (formData.reviewDate && formData.validUntil && new Date(formData.reviewDate) >= new Date(formData.validUntil)) {
+    editErrors.reviewDate = 'Review date should be before expiry date'
+  }
+
+  const editFormValid = formData.title.trim().length >= 10 && formData.controlId && formData.justification.trim().length >= 30 && formData.validUntil && Object.keys(editErrors).length === 0
+
   const openEdit = (exemption: any) => {
     setSelectedExemption(exemption)
     setFormData({
@@ -368,6 +403,7 @@ export function ExemptionsPage() {
       reviewDate: exemption.reviewDate ? new Date(exemption.reviewDate).toISOString().split('T')[0] : '',
       comments: exemption.comments || '',
     })
+    setEditTouched({})
     setIsEditOpen(true)
   }
 
@@ -745,14 +781,23 @@ export function ExemptionsPage() {
           <div className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Title *</Label>
+                <Label>Title <span className="text-red-500">*</span></Label>
                 <Input
                   value={formData.title}
                   onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                  onBlur={() => markEditTouched('title')}
+                  className={cn(editErrors.title && 'border-red-400')}
+                  maxLength={200}
+                  placeholder="Concise, descriptive title"
                 />
+                {editErrors.title ? (
+                  <p className="text-xs text-red-500">{editErrors.title}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Min 10, max 200 characters</p>
+                )}
               </div>
               <div className="space-y-2">
-                <Label>Exemption Type *</Label>
+                <Label>Exemption Type <span className="text-red-500">*</span></Label>
                 <Select value={formData.exemptionType} onValueChange={(v) => setFormData({ ...formData, exemptionType: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -761,11 +806,12 @@ export function ExemptionsPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">Full exemption or partial deviation</p>
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label>Control *</Label>
+              <Label>Control <span className="text-red-500">*</span></Label>
               <Select value={formData.controlId} onValueChange={(v) => {
                 const control = controls?.find((c: any) => c.id === v)
                 setFormData({ ...formData, controlId: v, frameworkId: control?.frameworkId || formData.frameworkId })
@@ -782,64 +828,118 @@ export function ExemptionsPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">The compliance control that cannot be fully implemented</p>
             </div>
 
             <div className="space-y-2">
-              <Label>Business Justification *</Label>
+              <Label>Business Justification <span className="text-red-500">*</span></Label>
               <Textarea
                 value={formData.justification}
                 onChange={(e) => setFormData({ ...formData, justification: e.target.value })}
+                onBlur={() => markEditTouched('justification')}
                 rows={3}
+                className={cn(editErrors.justification && 'border-red-400')}
+                maxLength={5000}
+                placeholder="Explain why this control cannot be fully implemented..."
               />
+              {editErrors.justification ? (
+                <p className="text-xs text-red-500">{editErrors.justification}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">Clearly state technical, operational, or business reasons. Min 30 characters.</p>
+              )}
             </div>
 
             <div className="space-y-2">
-              <Label>Risk Acceptance</Label>
+              <Label>Risk Acceptance <span className="text-xs font-normal text-orange-600">(Recommended)</span></Label>
               <Textarea
                 value={formData.riskAcceptance}
                 onChange={(e) => setFormData({ ...formData, riskAcceptance: e.target.value })}
                 rows={2}
+                maxLength={5000}
+                placeholder="Describe the residual risk that will be accepted..."
               />
+              <p className="text-xs text-muted-foreground">Helps approvers assess the security impact</p>
             </div>
 
             <div className="space-y-2">
-              <Label>Compensating Controls</Label>
+              <Label>Compensating Controls <span className="text-xs font-normal text-green-600">(Recommended)</span></Label>
               <Textarea
                 value={formData.compensatingControls}
                 onChange={(e) => setFormData({ ...formData, compensatingControls: e.target.value })}
                 rows={2}
+                maxLength={5000}
+                placeholder="Alternative security measures that partially mitigate the risk..."
               />
+              <p className="text-xs text-muted-foreground">Significantly improves approval chances</p>
             </div>
 
             <div className="grid grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label>Valid From</Label>
-                <Input type="date" value={formData.validFrom} onChange={(e) => setFormData({ ...formData, validFrom: e.target.value })} />
+                <Input
+                  type="date"
+                  value={formData.validFrom}
+                  onChange={(e) => setFormData({ ...formData, validFrom: e.target.value })}
+                  className={cn(editErrors.validFrom && 'border-red-400')}
+                />
+                {editErrors.validFrom ? (
+                  <p className="text-xs text-red-500">{editErrors.validFrom}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Defaults to approval date</p>
+                )}
               </div>
               <div className="space-y-2">
-                <Label>Valid Until *</Label>
-                <Input type="date" value={formData.validUntil} onChange={(e) => setFormData({ ...formData, validUntil: e.target.value })} />
+                <Label>Valid Until <span className="text-red-500">*</span></Label>
+                <Input
+                  type="date"
+                  value={formData.validUntil}
+                  onChange={(e) => setFormData({ ...formData, validUntil: e.target.value })}
+                  onBlur={() => markEditTouched('validUntil')}
+                  min={new Date().toISOString().split('T')[0]}
+                  className={cn(editErrors.validUntil && 'border-red-400')}
+                />
+                {editErrors.validUntil ? (
+                  <p className="text-xs text-red-500">{editErrors.validUntil}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Must be a future date</p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label>Review Date</Label>
-                <Input type="date" value={formData.reviewDate} onChange={(e) => setFormData({ ...formData, reviewDate: e.target.value })} />
+                <Input
+                  type="date"
+                  value={formData.reviewDate}
+                  onChange={(e) => setFormData({ ...formData, reviewDate: e.target.value })}
+                  className={cn(editErrors.reviewDate && 'border-red-400')}
+                />
+                {editErrors.reviewDate ? (
+                  <p className="text-xs text-red-500">{editErrors.reviewDate}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Before the expiry date</p>
+                )}
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label>Comments</Label>
+              <Label>Comments <span className="text-xs font-normal text-muted-foreground">(Optional)</span></Label>
               <Textarea
                 value={formData.comments}
                 onChange={(e) => setFormData({ ...formData, comments: e.target.value })}
                 rows={2}
+                maxLength={2000}
+                placeholder="Additional context, references, or supporting information..."
               />
+              <p className="text-xs text-muted-foreground">Max 2000 characters</p>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditOpen(false)}>Cancel</Button>
             <Button
-              onClick={handleUpdate}
-              disabled={!formData.title || !formData.controlId || !formData.justification || !formData.validUntil || updateMutation.isPending}
+              onClick={() => {
+                setEditTouched({ title: true, justification: true, validUntil: true })
+                if (editFormValid) handleUpdate()
+              }}
+              disabled={updateMutation.isPending}
             >
               {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Save Changes
@@ -899,9 +999,9 @@ export function ExemptionsPage() {
                 </div>
 
                 {/* Body - Split View */}
-                <div className="grid grid-cols-5 divide-x max-h-[calc(90vh-160px)] overflow-hidden">
-                  {/* Left Panel (2/5) */}
-                  <div className="col-span-2 p-5 overflow-y-auto space-y-5">
+                <div className="grid grid-cols-1 md:grid-cols-5 md:divide-x max-h-[calc(90vh-160px)] overflow-y-auto">
+                  {/* Left Panel - Info */}
+                  <div className="col-span-1 md:col-span-2 p-5 space-y-5">
                     {/* Control Info */}
                     <div>
                       <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Control</h4>
@@ -991,102 +1091,10 @@ export function ExemptionsPage() {
                         Created: {formatDate(selectedExemption.createdAt)}
                       </p>
                     </div>
-
-                    {/* Actions */}
-                    <div>
-                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Actions</h4>
-                      <div className="space-y-2">
-                        {canEdit && (selectedExemption.approvalStatus === 'DRAFT' || selectedExemption.approvalStatus === 'REJECTED') && (
-                          <>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="w-full justify-start"
-                              onClick={() => openEdit(selectedExemption)}
-                            >
-                              <Pencil className="mr-2 h-3.5 w-3.5" /> Edit Exemption
-                            </Button>
-                            <Button
-                              size="sm"
-                              className="w-full justify-start"
-                              onClick={() => submitForReviewMutation.mutate(selectedExemption.id)}
-                              disabled={submitForReviewMutation.isPending}
-                            >
-                              {submitForReviewMutation.isPending
-                                ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                                : <SendHorizontal className="mr-2 h-3.5 w-3.5" />}
-                              Submit for Review
-                            </Button>
-                          </>
-                        )}
-
-                        {canApproveFirst && selectedExemption.approvalStatus === 'PENDING_FIRST_APPROVAL' && (
-                          <Button
-                            size="sm"
-                            className="w-full justify-start bg-green-600 hover:bg-green-700"
-                            onClick={() => openApproval(1)}
-                          >
-                            <FileCheck className="mr-2 h-3.5 w-3.5" /> Approve (1st Level)
-                          </Button>
-                        )}
-
-                        {canApproveSecond && selectedExemption.approvalStatus === 'PENDING_SECOND_APPROVAL' && (
-                          <Button
-                            size="sm"
-                            className="w-full justify-start bg-green-600 hover:bg-green-700"
-                            onClick={() => openApproval(2)}
-                          >
-                            <FileCheck className="mr-2 h-3.5 w-3.5" /> Approve (2nd Level)
-                          </Button>
-                        )}
-
-                        {canApprove && ['PENDING_FIRST_APPROVAL', 'PENDING_SECOND_APPROVAL'].includes(selectedExemption.approvalStatus) && (
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            className="w-full justify-start"
-                            onClick={() => { setRejectReason(''); setIsRejectOpen(true) }}
-                          >
-                            <XCircle className="mr-2 h-3.5 w-3.5" /> Reject
-                          </Button>
-                        )}
-
-                        {canApprove && selectedExemption.status === 'ACTIVE' && selectedExemption.approvalStatus === 'APPROVED' && (
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            className="w-full justify-start"
-                            onClick={() => { setRevokeReason(''); setIsRevokeOpen(true) }}
-                          >
-                            <Ban className="mr-2 h-3.5 w-3.5" /> Revoke Exemption
-                          </Button>
-                        )}
-
-                        {canEdit && (expired || expiringSoon) && selectedExemption.status !== 'REVOKED' && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full justify-start border-yellow-300 text-yellow-700 hover:bg-yellow-50 dark:border-yellow-800 dark:text-yellow-400 dark:hover:bg-yellow-950"
-                            onClick={openRenew}
-                          >
-                            <RefreshCw className="mr-2 h-3.5 w-3.5" /> Renew Exemption
-                          </Button>
-                        )}
-
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="w-full justify-start"
-                          onClick={() => setIsVersionsOpen(true)}
-                        >
-                          <History className="mr-2 h-3.5 w-3.5" /> Version History ({selectedExemption._count?.versions || 0})
-                        </Button>
-                      </div>
-                    </div>
                   </div>
 
-                  {/* Right Panel (3/5) */}
-                  <div className="col-span-3 p-5 overflow-y-auto space-y-5">
+                  {/* Right Panel - Details & Actions */}
+                  <div className="col-span-1 md:col-span-3 p-5 space-y-5 border-t md:border-t-0">
                     {/* Justification */}
                     <div>
                       <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Business Justification</h4>
@@ -1135,6 +1143,93 @@ export function ExemptionsPage() {
                         </div>
                       </div>
                     )}
+
+                    {/* Actions */}
+                    <div className="pt-3 border-t">
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Actions</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {canEdit && (selectedExemption.approvalStatus === 'DRAFT' || selectedExemption.approvalStatus === 'REJECTED') && (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openEdit(selectedExemption)}
+                            >
+                              <Pencil className="mr-2 h-3.5 w-3.5" /> Edit Exemption
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => submitForReviewMutation.mutate(selectedExemption.id)}
+                              disabled={submitForReviewMutation.isPending}
+                            >
+                              {submitForReviewMutation.isPending
+                                ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                                : <SendHorizontal className="mr-2 h-3.5 w-3.5" />}
+                              Submit for Review
+                            </Button>
+                          </>
+                        )}
+
+                        {canApproveFirst && selectedExemption.approvalStatus === 'PENDING_FIRST_APPROVAL' && (
+                          <Button
+                            size="sm"
+                            className="bg-green-600 hover:bg-green-700"
+                            onClick={() => openApproval(1)}
+                          >
+                            <FileCheck className="mr-2 h-3.5 w-3.5" /> Approve (1st Level)
+                          </Button>
+                        )}
+
+                        {canApproveSecond && selectedExemption.approvalStatus === 'PENDING_SECOND_APPROVAL' && (
+                          <Button
+                            size="sm"
+                            className="bg-green-600 hover:bg-green-700"
+                            onClick={() => openApproval(2)}
+                          >
+                            <FileCheck className="mr-2 h-3.5 w-3.5" /> Approve (2nd Level)
+                          </Button>
+                        )}
+
+                        {canApprove && ['PENDING_FIRST_APPROVAL', 'PENDING_SECOND_APPROVAL'].includes(selectedExemption.approvalStatus) && (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => { setRejectReason(''); setIsRejectOpen(true) }}
+                          >
+                            <XCircle className="mr-2 h-3.5 w-3.5" /> Reject
+                          </Button>
+                        )}
+
+                        {canApprove && selectedExemption.status === 'ACTIVE' && selectedExemption.approvalStatus === 'APPROVED' && (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => { setRevokeReason(''); setIsRevokeOpen(true) }}
+                          >
+                            <Ban className="mr-2 h-3.5 w-3.5" /> Revoke Exemption
+                          </Button>
+                        )}
+
+                        {canEdit && (expired || expiringSoon) && selectedExemption.status !== 'REVOKED' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-yellow-300 text-yellow-700 hover:bg-yellow-50 dark:border-yellow-800 dark:text-yellow-400 dark:hover:bg-yellow-950"
+                            onClick={openRenew}
+                          >
+                            <RefreshCw className="mr-2 h-3.5 w-3.5" /> Renew Exemption
+                          </Button>
+                        )}
+
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setIsVersionsOpen(true)}
+                        >
+                          <History className="mr-2 h-3.5 w-3.5" /> Version History ({selectedExemption._count?.versions || 0})
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </>

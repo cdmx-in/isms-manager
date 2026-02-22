@@ -53,6 +53,13 @@ export const organizationApi = {
     axiosInstance.delete(`/organizations/${orgId}/members/${memberId}`),
   updateMemberOrgRole: (orgId: string, memberId: string, orgRoleId: string | null) =>
     axiosInstance.patch(`/organizations/${orgId}/members/${memberId}`, { orgRoleId }),
+  uploadLogo: (orgId: string, file: File) => {
+    const formData = new FormData()
+    formData.append('logo', file)
+    return axiosInstance.post(`/organizations/${orgId}/logo`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
 }
 
 export const roleApi = {
@@ -400,7 +407,7 @@ export const notificationApi = {
 export const infrastructureApi = {
   getConfig: (organizationId: string) =>
     axiosInstance.get('/infrastructure/config', { params: { organizationId } }),
-  saveConfig: (data: { organizationId: string; cloudflareApiToken: string; httpCheckProxy?: string; scanSchedule?: string; isEnabled?: boolean }) =>
+  saveConfig: (data: { organizationId: string; cloudflareApiToken?: string; httpCheckProxy?: string; scanSchedule?: string; isEnabled?: boolean }) =>
     axiosInstance.post('/infrastructure/config', data),
   stats: (organizationId: string) =>
     axiosInstance.get('/infrastructure/stats', { params: { organizationId } }),
@@ -429,6 +436,10 @@ export const infrastructureApi = {
     axiosInstance.get('/infrastructure/scan-history', { params: { organizationId, limit } }),
   exportReport: (organizationId: string) =>
     axiosInstance.get('/infrastructure/export', { params: { organizationId }, responseType: 'blob' }),
+  testProxy: (proxyUrl: string) =>
+    axiosInstance.post('/infrastructure/test-proxy', { proxyUrl }),
+  testToken: (cloudflareApiToken: string) =>
+    axiosInstance.post('/infrastructure/test-token', { cloudflareApiToken }),
 }
 
 export const googleWorkspaceApi = {
@@ -466,6 +477,8 @@ export const googleWorkspaceApi = {
     axiosInstance.get('/google-workspace/admin-roles', { params: { organizationId } }),
   roleAssignments: (params: { organizationId: string; userId?: string }) =>
     axiosInstance.get('/google-workspace/role-assignments', { params }),
+  testConnection: (data: { serviceAccountKey?: string; organizationId?: string; adminEmail: string; domain?: string }) =>
+    axiosInstance.post('/google-workspace/test-connection', data),
 }
 
 export const azureApi = {
@@ -499,6 +512,8 @@ export const azureApi = {
     axiosInstance.get('/azure/scan-history', { params: { organizationId, limit } }),
   exportReport: (organizationId: string, type?: string) =>
     axiosInstance.get('/azure/export', { params: { organizationId, type }, responseType: 'blob' }),
+  testConnection: (data: { tenantId: string; clientId: string; clientSecret?: string; subscriptionId: string; organizationId?: string }) =>
+    axiosInstance.post('/azure/test-connection', data),
 }
 
 // Unified API object for components - wraps raw API calls with response extraction
@@ -959,7 +974,7 @@ export const api = {
       const response = await infrastructureApi.getConfig(organizationId)
       return response.data?.data
     },
-    saveConfig: async (data: { organizationId: string; cloudflareApiToken: string; httpCheckProxy?: string; scanSchedule?: string; isEnabled?: boolean }) => {
+    saveConfig: async (data: { organizationId: string; cloudflareApiToken?: string; httpCheckProxy?: string; scanSchedule?: string; isEnabled?: boolean }) => {
       const response = await infrastructureApi.saveConfig(data)
       return response.data?.data
     },
@@ -1006,6 +1021,14 @@ export const api = {
     exportReport: async (organizationId: string) => {
       const response = await infrastructureApi.exportReport(organizationId)
       return response.data
+    },
+    testProxy: async (proxyUrl: string) => {
+      const response = await infrastructureApi.testProxy(proxyUrl)
+      return response.data?.data
+    },
+    testToken: async (cloudflareApiToken: string) => {
+      const response = await infrastructureApi.testToken(cloudflareApiToken)
+      return response.data?.data
     },
   },
   googleWorkspace: {
@@ -1077,6 +1100,10 @@ export const api = {
       const response = await googleWorkspaceApi.roleAssignments({ organizationId, ...params })
       return response.data?.data || []
     },
+    testConnection: async (data: { serviceAccountKey?: string; organizationId?: string; adminEmail: string; domain?: string }) => {
+      const response = await googleWorkspaceApi.testConnection(data)
+      return response.data?.data
+    },
   },
   azure: {
     getConfig: async (organizationId: string) => {
@@ -1138,6 +1165,10 @@ export const api = {
     exportReport: async (organizationId: string, type?: string) => {
       const response = await azureApi.exportReport(organizationId, type)
       return response.data
+    },
+    testConnection: async (data: { tenantId: string; clientId: string; clientSecret?: string; subscriptionId: string; organizationId?: string }) => {
+      const response = await azureApi.testConnection(data)
+      return response.data?.data
     },
   },
   audit: {

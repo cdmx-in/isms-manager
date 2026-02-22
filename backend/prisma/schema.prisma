@@ -110,6 +110,9 @@ model Organization {
   logo        String?
   isActive    Boolean  @default(true) @map("is_active")
 
+  // Infrastructure services enabled for this org
+  enabledServices String[] @default(["cloudflare", "google_workspace", "azure"]) @map("enabled_services")
+
   // Risk acceptance thresholds (CIA triad)
   riskAcceptConfidentiality Int @default(3) @map("risk_accept_confidentiality")
   riskAcceptIntegrity       Int @default(3) @map("risk_accept_integrity")

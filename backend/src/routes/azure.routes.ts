@@ -118,6 +118,74 @@ router.post(
 );
 
 // ============================================
+// TEST CONNECTION
+// ============================================
+
+router.post(
+  '/test-connection',
+  authenticate,
+  requirePermission('infrastructure', 'edit'),
+  asyncHandler(async (req, res) => {
+    const { tenantId, clientId, clientSecret, subscriptionId, organizationId } = req.body;
+    if (!tenantId) throw new AppError('tenantId is required', 400);
+    if (!clientId) throw new AppError('clientId is required', 400);
+    if (!subscriptionId) throw new AppError('subscriptionId is required', 400);
+
+    // Resolve client secret: use provided one, or fall back to existing
+    let resolvedSecret = clientSecret;
+    if (!resolvedSecret && organizationId) {
+      const existing = await prisma.azureConfig.findUnique({ where: { organizationId } });
+      if (!existing?.clientSecret) {
+        return res.json({
+          success: true,
+          data: { valid: false, error: 'No client secret configured. Please provide one.' },
+        });
+      }
+      resolvedSecret = existing.clientSecret;
+    }
+    if (!resolvedSecret) {
+      return res.json({
+        success: true,
+        data: { valid: false, error: 'Client secret is required.' },
+      });
+    }
+
+    const startTime = Date.now();
+    try {
+      const client = createAzureClient({ tenantId, clientId, clientSecret: resolvedSecret, subscriptionId });
+      const valid = await client.verifyCredentials();
+      const latency = Date.now() - startTime;
+
+      if (valid) {
+        res.json({
+          success: true,
+          data: { valid: true, latency, tenantId },
+        });
+      } else {
+        res.json({
+          success: true,
+          data: {
+            valid: false,
+            latency,
+            error: 'Credential verification failed. Ensure the Service Principal has required API permissions and admin consent.',
+          },
+        });
+      }
+    } catch (err: any) {
+      const latency = Date.now() - startTime;
+      res.json({
+        success: true,
+        data: {
+          valid: false,
+          latency,
+          error: err.message || 'Failed to connect to Azure',
+        },
+      });
+    }
+  })
+);
+
+// ============================================
 // STATS
 // ============================================
 

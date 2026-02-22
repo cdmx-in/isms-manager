@@ -1,4 +1,6 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -10,6 +12,9 @@ import rateLimit from 'express-rate-limit';
 import hpp from 'hpp';
 import { createClient } from 'redis';
 import { PrismaClient } from '@prisma/client';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 import { configurePassport } from './config/passport.js';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -202,6 +207,9 @@ app.get('/api/health', (_req: Request, res: Response) => {
     uptime: process.uptime(),
   });
 });
+
+// Serve uploaded files (org logos etc.) from /uploads
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 // ============================================
 // SERVER STARTUP

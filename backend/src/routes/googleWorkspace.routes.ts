@@ -140,6 +140,109 @@ router.post(
   })
 );
 
+// POST /api/google-workspace/test-connection
+router.post(
+  '/test-connection',
+  authenticate,
+  requirePermission('infrastructure', 'edit'),
+  asyncHandler(async (req, res) => {
+    const { serviceAccountKey, adminEmail, domain, organizationId } = req.body;
+    if (!adminEmail) throw new AppError('adminEmail is required', 400);
+
+    let parsed: any;
+
+    if (serviceAccountKey) {
+      // Clean JSON from provided key
+      const cleaned = serviceAccountKey
+        .replace(/^\uFEFF/, '')
+        .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+        .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+        .replace(/[\u00A0]/g, ' ')
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .trim();
+
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch (err: any) {
+        return res.json({
+          success: true,
+          data: { valid: false, error: `Invalid JSON: ${err.message}` },
+        });
+      }
+    } else if (organizationId) {
+      // Fall back to stored key
+      const existing = await prisma.gWorkspaceConfig.findUnique({
+        where: { organizationId },
+      });
+      if (!existing?.serviceAccountKey) {
+        return res.json({
+          success: true,
+          data: { valid: false, error: 'No service account key configured. Please upload one.' },
+        });
+      }
+      try {
+        parsed = JSON.parse(existing.serviceAccountKey);
+      } catch {
+        return res.json({
+          success: true,
+          data: { valid: false, error: 'Stored service account key is corrupted. Please upload a new one.' },
+        });
+      }
+    } else {
+      throw new AppError('serviceAccountKey or organizationId is required', 400);
+    }
+
+    if (!parsed.client_email || !parsed.private_key) {
+      return res.json({
+        success: true,
+        data: { valid: false, error: 'Missing client_email or private_key fields' },
+      });
+    }
+
+    const startTime = Date.now();
+    try {
+      const client = createGoogleWorkspaceClient({
+        serviceAccountKey: JSON.stringify(parsed),
+        adminEmail,
+        domain,
+      });
+      const valid = await client.verifyCredentials();
+      const latency = Date.now() - startTime;
+
+      if (valid) {
+        res.json({
+          success: true,
+          data: {
+            valid: true,
+            latency,
+            clientEmail: parsed.client_email,
+            projectId: parsed.project_id || null,
+          },
+        });
+      } else {
+        res.json({
+          success: true,
+          data: {
+            valid: false,
+            latency,
+            error: 'Credential verification failed. Ensure domain-wide delegation is configured and admin email is a super admin.',
+          },
+        });
+      }
+    } catch (err: any) {
+      const latency = Date.now() - startTime;
+      res.json({
+        success: true,
+        data: {
+          valid: false,
+          latency,
+          error: err.message || 'Failed to connect to Google Workspace API',
+        },
+      });
+    }
+  })
+);
+
 // ============================================
 // STATS
 // ============================================

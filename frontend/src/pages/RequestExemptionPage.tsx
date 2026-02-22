@@ -87,6 +87,73 @@ export function RequestExemptionPage() {
     comments: '',
   })
   const [controlSelectOpen, setControlSelectOpen] = useState(false)
+  const [touched, setTouched] = useState<Record<string, boolean>>({})
+
+  const markTouched = (field: string) => setTouched(prev => ({ ...prev, [field]: true }))
+
+  // Field-level validation errors
+  const errors = useMemo(() => {
+    const errs: Record<string, string> = {}
+    if (touched.title && !formData.title.trim()) {
+      errs.title = 'Title is required'
+    } else if (touched.title && formData.title.trim().length < 10) {
+      errs.title = 'Title should be at least 10 characters for clarity'
+    } else if (formData.title.length > 200) {
+      errs.title = 'Title must not exceed 200 characters'
+    }
+    if (touched.controlId && !formData.controlId) {
+      errs.controlId = 'A control must be selected'
+    }
+    if (touched.exemptionType && !formData.exemptionType) {
+      errs.exemptionType = 'Please select an exemption type'
+    }
+    if (touched.justification && !formData.justification.trim()) {
+      errs.justification = 'Business justification is required'
+    } else if (touched.justification && formData.justification.trim().length < 30) {
+      errs.justification = 'Provide at least 30 characters of justification for a thorough review'
+    } else if (formData.justification.length > 5000) {
+      errs.justification = 'Justification must not exceed 5000 characters'
+    }
+    if (formData.riskAcceptance && formData.riskAcceptance.length > 5000) {
+      errs.riskAcceptance = 'Risk acceptance must not exceed 5000 characters'
+    }
+    if (formData.compensatingControls && formData.compensatingControls.length > 5000) {
+      errs.compensatingControls = 'Compensating controls must not exceed 5000 characters'
+    }
+    if (touched.validUntil && !formData.validUntil) {
+      errs.validUntil = 'Expiry date is required'
+    } else if (formData.validUntil) {
+      const until = new Date(formData.validUntil)
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      if (until <= today) {
+        errs.validUntil = 'Expiry date must be in the future'
+      }
+      const maxDate = new Date()
+      maxDate.setFullYear(maxDate.getFullYear() + 3)
+      if (until > maxDate) {
+        errs.validUntil = 'Exemptions should not exceed 3 years. Consider a shorter period with renewal.'
+      }
+    }
+    if (formData.validFrom && formData.validUntil) {
+      if (new Date(formData.validFrom) >= new Date(formData.validUntil)) {
+        errs.validFrom = 'Start date must be before the expiry date'
+      }
+    }
+    if (formData.reviewDate) {
+      const review = new Date(formData.reviewDate)
+      if (formData.validUntil && review >= new Date(formData.validUntil)) {
+        errs.reviewDate = 'Review date should be before the expiry date'
+      }
+      if (formData.validFrom && review < new Date(formData.validFrom)) {
+        errs.reviewDate = 'Review date should be on or after the start date'
+      }
+    }
+    if (formData.comments && formData.comments.length > 2000) {
+      errs.comments = 'Comments must not exceed 2000 characters'
+    }
+    return errs
+  }, [formData, touched])
 
   const { data: controls } = useQuery({
     queryKey: ['controls-for-exemption', currentOrganizationId],
@@ -131,6 +198,14 @@ export function RequestExemptionPage() {
   })
 
   const handleSubmit = () => {
+    // Touch all required fields to show errors
+    const requiredFields = ['title', 'controlId', 'exemptionType', 'justification', 'validUntil']
+    const allTouched: Record<string, boolean> = {}
+    requiredFields.forEach(f => { allTouched[f] = true })
+    setTouched(prev => ({ ...prev, ...allTouched }))
+
+    if (!isValid) return
+
     createMutation.mutate({
       ...formData,
       organizationId: currentOrganizationId,
@@ -140,7 +215,8 @@ export function RequestExemptionPage() {
     })
   }
 
-  const isValid = formData.title && formData.controlId && formData.exemptionType && formData.justification && formData.validUntil
+  const hasNoErrors = Object.keys(errors).length === 0 || Object.keys(errors).every(k => !errors[k])
+  const isValid = formData.title.trim().length >= 10 && formData.controlId && formData.exemptionType && formData.justification.trim().length >= 30 && formData.validUntil && hasNoErrors
 
   return (
     <div className="space-y-6 pb-10">
@@ -263,17 +339,27 @@ export function RequestExemptionPage() {
               placeholder="e.g., Legacy system access control exemption for Building A"
               value={formData.title}
               onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              onBlur={() => markTouched('title')}
+              className={cn(errors.title && 'border-red-400 focus:border-red-400')}
+              maxLength={200}
             />
-            <p className="text-xs text-muted-foreground">
-              Give a concise, descriptive title that identifies the scope and reason for the exemption.
-            </p>
+            {errors.title ? (
+              <p className="text-xs text-red-500">{errors.title}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Give a concise, descriptive title (10-200 chars) that identifies the scope and reason for the exemption.
+              </p>
+            )}
+            {formData.title.length > 150 && (
+              <p className="text-xs text-muted-foreground">{formData.title.length}/200 characters</p>
+            )}
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="controlId">
               Control <span className="text-red-500">*</span>
             </Label>
-            <Popover open={controlSelectOpen} onOpenChange={setControlSelectOpen}>
+            <Popover open={controlSelectOpen} onOpenChange={(open) => { setControlSelectOpen(open); if (!open) markTouched('controlId') }}>
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
@@ -330,9 +416,13 @@ export function RequestExemptionPage() {
                 </Command>
               </PopoverContent>
             </Popover>
-            <p className="text-xs text-muted-foreground">
-              Search and select the specific compliance control that cannot be fully implemented.
-            </p>
+            {errors.controlId ? (
+              <p className="text-xs text-red-500">{errors.controlId}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Search and select the specific compliance control that cannot be fully implemented.
+              </p>
+            )}
           </div>
 
           {/* Selected control info card */}
@@ -393,12 +483,21 @@ export function RequestExemptionPage() {
               placeholder="Explain in detail why this control cannot be fully implemented. Include technical constraints, business requirements, or environmental factors that prevent compliance..."
               value={formData.justification}
               onChange={(e) => setFormData({ ...formData, justification: e.target.value })}
+              onBlur={() => markTouched('justification')}
               rows={4}
-              className="resize-y"
+              className={cn('resize-y', errors.justification && 'border-red-400 focus:border-red-400')}
+              maxLength={5000}
             />
-            <p className="text-xs text-muted-foreground">
-              Clearly explain why this control cannot be met. Include technical, operational, or business reasons.
-            </p>
+            {errors.justification ? (
+              <p className="text-xs text-red-500">{errors.justification}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Clearly explain why this control cannot be met. Include technical, operational, or business reasons. Minimum 30 characters.
+              </p>
+            )}
+            {formData.justification.length > 100 && (
+              <p className="text-xs text-muted-foreground">{formData.justification.length}/5000 characters</p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -412,11 +511,16 @@ export function RequestExemptionPage() {
               value={formData.riskAcceptance}
               onChange={(e) => setFormData({ ...formData, riskAcceptance: e.target.value })}
               rows={3}
-              className="resize-y border-orange-200/50 focus:border-orange-300 dark:border-orange-900/50"
+              className={cn('resize-y', errors.riskAcceptance ? 'border-red-400 focus:border-red-400' : 'border-orange-200/50 focus:border-orange-300 dark:border-orange-900/50')}
+              maxLength={5000}
             />
-            <p className="text-xs text-muted-foreground">
-              Document the risk being accepted. This helps approvers assess the security impact of granting the exemption.
-            </p>
+            {errors.riskAcceptance ? (
+              <p className="text-xs text-red-500">{errors.riskAcceptance}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Document the risk being accepted. This helps approvers assess the security impact of granting the exemption.
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -430,11 +534,16 @@ export function RequestExemptionPage() {
               value={formData.compensatingControls}
               onChange={(e) => setFormData({ ...formData, compensatingControls: e.target.value })}
               rows={3}
-              className="resize-y border-green-200/50 focus:border-green-300 dark:border-green-900/50"
+              className={cn('resize-y', errors.compensatingControls ? 'border-red-400 focus:border-red-400' : 'border-green-200/50 focus:border-green-300 dark:border-green-900/50')}
+              maxLength={5000}
             />
-            <p className="text-xs text-muted-foreground">
-              Compensating controls reduce the risk impact and significantly improve approval chances.
-            </p>
+            {errors.compensatingControls ? (
+              <p className="text-xs text-red-500">{errors.compensatingControls}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Compensating controls reduce the risk impact and significantly improve approval chances.
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -460,10 +569,16 @@ export function RequestExemptionPage() {
                 type="date"
                 value={formData.validFrom}
                 onChange={(e) => setFormData({ ...formData, validFrom: e.target.value })}
+                onBlur={() => markTouched('validFrom')}
+                className={cn(errors.validFrom && 'border-red-400 focus:border-red-400')}
               />
-              <p className="text-xs text-muted-foreground">
-                When the exemption takes effect. Defaults to approval date if left empty.
-              </p>
+              {errors.validFrom ? (
+                <p className="text-xs text-red-500">{errors.validFrom}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  When the exemption takes effect. Defaults to approval date if left empty.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="validUntil">
@@ -474,11 +589,17 @@ export function RequestExemptionPage() {
                 type="date"
                 value={formData.validUntil}
                 onChange={(e) => setFormData({ ...formData, validUntil: e.target.value })}
-                className="border-primary/30"
+                onBlur={() => markTouched('validUntil')}
+                min={new Date().toISOString().split('T')[0]}
+                className={cn(errors.validUntil ? 'border-red-400 focus:border-red-400' : 'border-primary/30')}
               />
-              <p className="text-xs text-muted-foreground">
-                Expiry date. The exemption will automatically expire after this date and require renewal.
-              </p>
+              {errors.validUntil ? (
+                <p className="text-xs text-red-500">{errors.validUntil}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Expiry date (must be in the future, max 3 years). The exemption will automatically expire and require renewal.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <div className="flex items-center gap-2">
@@ -490,10 +611,16 @@ export function RequestExemptionPage() {
                 type="date"
                 value={formData.reviewDate}
                 onChange={(e) => setFormData({ ...formData, reviewDate: e.target.value })}
+                onBlur={() => markTouched('reviewDate')}
+                className={cn(errors.reviewDate && 'border-red-400 focus:border-red-400')}
               />
-              <p className="text-xs text-muted-foreground">
-                Set a date to reassess whether the exemption is still needed.
-              </p>
+              {errors.reviewDate ? (
+                <p className="text-xs text-red-500">{errors.reviewDate}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Set a date before the expiry to reassess whether the exemption is still needed.
+                </p>
+              )}
             </div>
           </div>
         </CardContent>
@@ -518,8 +645,16 @@ export function RequestExemptionPage() {
             value={formData.comments}
             onChange={(e) => setFormData({ ...formData, comments: e.target.value })}
             rows={3}
-            className="resize-y"
+            className={cn('resize-y', errors.comments && 'border-red-400 focus:border-red-400')}
+            maxLength={2000}
           />
+          {errors.comments ? (
+            <p className="text-xs text-red-500">{errors.comments}</p>
+          ) : (
+            <p className="text-xs text-muted-foreground mt-2">
+              References to risk assessments, prior discussions, or supporting documents. Max 2000 characters.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -533,17 +668,21 @@ export function RequestExemptionPage() {
                 The exemption will be saved as a <span className="font-medium">Draft</span>. You can submit it for review from the exemptions list.
               </p>
               {!isValid && (
-                <div className="flex items-center gap-1.5 mt-2">
-                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-                  <p className="text-xs text-amber-600 dark:text-amber-400">
-                    Please fill in all required fields: {[
-                      !formData.exemptionType && 'Exemption Type',
-                      !formData.title && 'Title',
-                      !formData.controlId && 'Control',
-                      !formData.justification && 'Justification',
-                      !formData.validUntil && 'Valid Until',
-                    ].filter(Boolean).join(', ')}
-                  </p>
+                <div className="flex items-start gap-1.5 mt-2">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500 mt-0.5 shrink-0" />
+                  <div className="text-xs text-amber-600 dark:text-amber-400">
+                    <p>Please complete the following:</p>
+                    <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                      {!formData.exemptionType && <li>Select an exemption type (Full or Partial)</li>}
+                      {(!formData.title.trim() || formData.title.trim().length < 10) && <li>Provide a descriptive title (min 10 characters)</li>}
+                      {!formData.controlId && <li>Select a compliance control</li>}
+                      {(!formData.justification.trim() || formData.justification.trim().length < 30) && <li>Provide business justification (min 30 characters)</li>}
+                      {!formData.validUntil && <li>Set an expiry date</li>}
+                      {Object.entries(errors).filter(([_, v]) => v).map(([k, v]) => (
+                        !['title', 'controlId', 'exemptionType', 'justification', 'validUntil'].includes(k) && <li key={k}>{v}</li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               )}
             </div>

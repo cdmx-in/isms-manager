@@ -34,10 +34,21 @@ import {
   HardDrive,
   RefreshCw,
   Users,
+  Radio,
+  CheckCircle2,
 } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
+import { organizationApi } from '@/lib/api'
+import { CloudflareLogo, GoogleWorkspaceLogo, AzureLogo } from '@/components/icons/ServiceLogos'
+
+const INFRA_SERVICES = [
+  { slug: 'cloudflare', name: 'Cloudflare', description: 'DNS, CDN & origin exposure monitoring', icon: CloudflareLogo, color: 'text-orange-600', bg: 'bg-orange-50 border-orange-200' },
+  { slug: 'google_workspace', name: 'Google Workspace', description: 'Users, groups, OAuth apps & CIS benchmarks', icon: GoogleWorkspaceLogo, color: 'text-blue-600', bg: 'bg-blue-50 border-blue-200' },
+  { slug: 'azure', name: 'Azure', description: 'Entra ID, Defender & conditional access', icon: AzureLogo, color: 'text-sky-600', bg: 'bg-sky-50 border-sky-200' },
+]
 
 export function SettingsPage() {
-  const { user, currentOrganizationId } = useAuthStore()
+  const { user, currentOrganizationId, checkAuth } = useAuthStore()
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
@@ -59,6 +70,48 @@ export function SettingsPage() {
   const currentOrg = user?.organizationMemberships.find(
     (m) => m.organizationId === currentOrganizationId
   )
+
+  const [enabledServices, setEnabledServices] = useState<string[]>(
+    currentOrg?.organization?.enabledServices || ['cloudflare', 'google_workspace', 'azure']
+  )
+  const [servicesSaving, setServicesSaving] = useState(false)
+  const [logoUploading, setLogoUploading] = useState(false)
+
+  const toggleService = (slug: string) => {
+    setEnabledServices(prev =>
+      prev.includes(slug) ? prev.filter(s => s !== slug) : [...prev, slug]
+    )
+  }
+
+  const saveServices = async () => {
+    if (!currentOrganizationId) return
+    setServicesSaving(true)
+    try {
+      await organizationApi.update(currentOrganizationId, { enabledServices })
+      await checkAuth()
+      toast({ title: 'Services updated', description: 'Infrastructure service settings saved. Sidebar updated.' })
+    } catch (err: any) {
+      toast({ title: 'Failed to save', description: err?.response?.data?.message || 'Could not update services', variant: 'destructive' })
+    } finally {
+      setServicesSaving(false)
+    }
+  }
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !currentOrganizationId) return
+    setLogoUploading(true)
+    try {
+      await organizationApi.uploadLogo(currentOrganizationId, file)
+      await checkAuth()
+      toast({ title: 'Logo updated', description: 'Organization logo has been uploaded successfully.' })
+    } catch (err: any) {
+      toast({ title: 'Upload failed', description: err?.response?.data?.message || 'Could not upload logo', variant: 'destructive' })
+    } finally {
+      setLogoUploading(false)
+      e.target.value = ''
+    }
+  }
 
   // Drive folders query
   const { data: foldersData, refetch: refetchFolders } = useQuery({
@@ -422,17 +475,52 @@ export function SettingsPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid gap-2">
-                  <Label>Organization Name</Label>
-                  <Input
-                    value={currentOrg?.organization.name || ''}
-                    disabled
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Your Role</Label>
-                  <div>
-                    <Badge>{currentOrg?.role}</Badge>
+                <div className="flex items-start gap-6">
+                  <div className="shrink-0">
+                    <Label className="text-xs text-muted-foreground mb-1 block">Logo</Label>
+                    <div className="relative group">
+                      <div className="h-20 w-20 rounded-lg border-2 border-dashed border-muted-foreground/25 flex items-center justify-center overflow-hidden bg-muted/30">
+                        {currentOrg?.organization?.logo ? (
+                          <img
+                            src={currentOrg.organization.logo}
+                            alt="Org logo"
+                            className="h-full w-full object-contain"
+                          />
+                        ) : (
+                          <Building2 className="h-8 w-8 text-muted-foreground/50" />
+                        )}
+                      </div>
+                      <label className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 rounded-lg cursor-pointer transition-opacity">
+                        {logoUploading ? (
+                          <Loader2 className="h-5 w-5 text-white animate-spin" />
+                        ) : (
+                          <Upload className="h-5 w-5 text-white" />
+                        )}
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                          className="sr-only"
+                          onChange={handleLogoUpload}
+                          disabled={logoUploading}
+                        />
+                      </label>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1 text-center">Hover to change</p>
+                  </div>
+                  <div className="flex-1 space-y-3">
+                    <div className="grid gap-2">
+                      <Label>Organization Name</Label>
+                      <Input
+                        value={currentOrg?.organization.name || ''}
+                        disabled
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label>Your Role</Label>
+                      <div>
+                        <Badge>{currentOrg?.role}</Badge>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </CardContent>
@@ -450,6 +538,54 @@ export function SettingsPage() {
                   <Users className="mr-2 h-4 w-4" />
                   Manage Users
                 </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Radio className="h-5 w-5" />
+                  Infrastructure Services
+                </CardTitle>
+                <CardDescription>
+                  Choose which infrastructure monitoring services are enabled for this organization. Disabled services will be hidden from the sidebar.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {INFRA_SERVICES.map(svc => {
+                  const Icon = svc.icon
+                  const checked = enabledServices.includes(svc.slug)
+                  return (
+                    <div
+                      key={svc.slug}
+                      className={`flex items-center gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${checked ? svc.bg : 'bg-muted/30 border-transparent opacity-60'}`}
+                      onClick={() => toggleService(svc.slug)}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() => toggleService(svc.slug)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="shrink-0"
+                      />
+                      <Icon className="h-5 w-5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium">{svc.name}</p>
+                        <p className="text-xs text-muted-foreground">{svc.description}</p>
+                      </div>
+                      {checked && <CheckCircle2 className={`h-4 w-4 shrink-0 ${svc.color}`} />}
+                    </div>
+                  )
+                })}
+                <div className="pt-2">
+                  <Button
+                    onClick={saveServices}
+                    disabled={servicesSaving}
+                    size="sm"
+                  >
+                    {servicesSaving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
+                    Save Services
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>

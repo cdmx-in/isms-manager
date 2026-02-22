@@ -72,6 +72,23 @@ function PermissionGate({ module, children }: { module: string; children: React.
   return <>{children}</>
 }
 
+function ServiceGate({ serviceSlug, children }: { serviceSlug: string; children: React.ReactNode }) {
+  const { user, currentOrganizationId } = useAuthStore()
+  const currentOrg = user?.organizationMemberships.find(m => m.organizationId === currentOrganizationId)
+  const enabledServices = currentOrg?.organization?.enabledServices || ['cloudflare', 'google_workspace', 'azure']
+
+  if (!enabledServices.includes(serviceSlug)) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] text-center">
+        <h2 className="text-2xl font-bold mb-2">Service Not Enabled</h2>
+        <p className="text-muted-foreground">This service is not enabled for your organization. Contact your admin to enable it in Settings.</p>
+      </div>
+    )
+  }
+
+  return <>{children}</>
+}
+
 function App() {
   return (
     <>
@@ -105,9 +122,9 @@ function App() {
           <Route path="exemptions/new" element={<PermissionGate module="exemptions"><RequestExemptionPage /></PermissionGate>} />
           <Route path="assessments" element={<PermissionGate module="assessments"><AssessmentsPage /></PermissionGate>} />
           <Route path="assessments/:id" element={<PermissionGate module="assessments"><AssessmentConductPage /></PermissionGate>} />
-          <Route path="infrastructure/cloudflare" element={<PermissionGate module="infrastructure"><InfrastructureMonitorPage /></PermissionGate>} />
-          <Route path="infrastructure/google-workspace" element={<PermissionGate module="infrastructure"><GoogleWorkspacePage /></PermissionGate>} />
-          <Route path="infrastructure/azure" element={<PermissionGate module="infrastructure"><AzurePage /></PermissionGate>} />
+          <Route path="infrastructure/cloudflare" element={<PermissionGate module="infrastructure"><ServiceGate serviceSlug="cloudflare"><InfrastructureMonitorPage /></ServiceGate></PermissionGate>} />
+          <Route path="infrastructure/google-workspace" element={<PermissionGate module="infrastructure"><ServiceGate serviceSlug="google_workspace"><GoogleWorkspacePage /></ServiceGate></PermissionGate>} />
+          <Route path="infrastructure/azure" element={<PermissionGate module="infrastructure"><ServiceGate serviceSlug="azure"><AzurePage /></ServiceGate></PermissionGate>} />
           <Route path="organizations" element={<PermissionGate module="settings"><OrganizationsPage /></PermissionGate>} />
           <Route path="audit-log" element={<PermissionGate module="audit_log"><AuditLogPage /></PermissionGate>} />
           <Route path="users" element={<PermissionGate module="users"><UserManagementPage /></PermissionGate>} />

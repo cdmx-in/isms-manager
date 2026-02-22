@@ -30,15 +30,28 @@ import {
   Download, Settings2, Timer, Smartphone, KeyRound,
   CheckCircle2, XCircle, AlertCircle, MinusCircle, Info,
   HelpCircle, ExternalLink, Copy, Check, Upload,
-  FolderTree, Crown, Tag, ChevronDown, ChevronUp, Pencil, X, Eye,
+  FolderTree, Crown, Tag, ChevronDown, ChevronUp, Pencil, X, Eye, Zap,
 } from 'lucide-react'
+import { GoogleWorkspaceLogo } from '@/components/icons/ServiceLogos'
 import { Label } from '@/components/ui/label'
 
 const CRON_LABELS: Record<string, string> = {
-  '0 0 * * *': 'Daily at midnight UTC',
-  '0 */6 * * *': 'Every 6 hours',
-  '0 */12 * * *': 'Every 12 hours',
-  '0 0 * * 0': 'Weekly (Sunday midnight UTC)',
+  '30 18 * * *': 'Daily at midnight IST',
+  '30 0,6,12,18 * * *': 'Every 6 hours IST',
+  '30 6,18 * * *': 'Every 12 hours IST',
+  '30 18 * * 6': 'Weekly (Sunday midnight IST)',
+  // Legacy UTC for display
+  '0 0 * * *': 'Daily at midnight IST',
+  '0 */6 * * *': 'Every 6 hours IST',
+  '0 */12 * * *': 'Every 12 hours IST',
+  '0 0 * * 0': 'Weekly (Sunday midnight IST)',
+}
+
+const GW_CRON_MIGRATE: Record<string, string> = {
+  '0 0 * * *': '30 18 * * *',
+  '0 */6 * * *': '30 0,6,12,18 * * *',
+  '0 */12 * * *': '30 6,18 * * *',
+  '0 0 * * 0': '30 18 * * 6',
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -191,10 +204,16 @@ export function GoogleWorkspacePage() {
   const [saKey, setSaKey] = useState('')
   const [saKeyValid, setSaKeyValid] = useState<boolean | null>(null)
   const [saKeyError, setSaKeyError] = useState('')
+  const [saFileName, setSaFileName] = useState('')
   const [adminEmail, setAdminEmail] = useState('')
+  const [adminEmailTouched, setAdminEmailTouched] = useState(false)
   const [gwDomain, setGwDomain] = useState('')
-  const [gwSchedule, setGwSchedule] = useState('0 0 * * *')
+  const [gwSchedule, setGwSchedule] = useState('30 18 * * *')
   const [gwEnabled, setGwEnabled] = useState(true)
+
+  // Connection test
+  const [connTesting, setConnTesting] = useState(false)
+  const [connTestResult, setConnTestResult] = useState<any>(null)
 
   // Tab filters
   const [userSearch, setUserSearch] = useState('')
@@ -389,6 +408,7 @@ export function GoogleWorkspacePage() {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    setSaFileName(file.name)
     const reader = new FileReader()
     reader.onload = (ev) => {
       const text = ev.target?.result as string
@@ -399,6 +419,28 @@ export function GoogleWorkspacePage() {
     reader.readAsText(file)
     // Reset input so same file can be re-selected
     e.target.value = ''
+  }
+
+  const handleTestConnection = async () => {
+    setConnTesting(true)
+    setConnTestResult(null)
+    try {
+      let keyToTest = ''
+      if (saKey.trim()) {
+        keyToTest = getCleanedKey()
+      }
+      const result = await api.googleWorkspace.testConnection({
+        serviceAccountKey: keyToTest || undefined,
+        organizationId: !keyToTest ? orgId : undefined,
+        adminEmail,
+        domain: gwDomain || undefined,
+      })
+      setConnTestResult(result)
+    } catch (err: any) {
+      setConnTestResult({ valid: false, error: err.response?.data?.error?.message || 'Connection test failed' })
+    } finally {
+      setConnTesting(false)
+    }
   }
 
   const getCleanedKey = (): string => {
@@ -416,13 +458,36 @@ export function GoogleWorkspacePage() {
   }
 
   const saveConfigMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       let cleanedKey = ''
       if (saKey.trim()) {
         try {
           cleanedKey = getCleanedKey()
         } catch (e: any) {
-          return Promise.reject({ response: { data: { error: { message: `Invalid service account JSON: ${e.message}. Use the Upload button to load the JSON file directly.` } } } })
+          throw { response: { data: { error: { message: `Invalid service account JSON: ${e.message}. Use the Upload button to load the JSON file directly.` } } } }
+        }
+      }
+      // Test connection before saving (only if we have a key or existing key)
+      if (cleanedKey || configData?.hasServiceAccountKey) {
+        setConnTesting(true)
+        setConnTestResult(null)
+        try {
+          const testResult = await api.googleWorkspace.testConnection({
+            serviceAccountKey: cleanedKey || undefined,
+            organizationId: !cleanedKey ? orgId : undefined,
+            adminEmail,
+            domain: gwDomain || undefined,
+          })
+          setConnTestResult(testResult)
+          if (!testResult.valid) {
+            throw { response: { data: { error: { message: testResult.error || 'Connection test failed. Please verify your credentials.' } } } }
+          }
+        } catch (err: any) {
+          if (err.response?.data?.error) throw err
+          setConnTestResult({ valid: false, error: err.message || 'Connection test failed' })
+          throw { response: { data: { error: { message: err.response?.data?.error?.message || 'Connection test failed. Please verify your credentials.' } } } }
+        } finally {
+          setConnTesting(false)
         }
       }
       return api.googleWorkspace.saveConfig({
@@ -435,7 +500,7 @@ export function GoogleWorkspacePage() {
       })
     },
     onSuccess: () => {
-      toast({ title: 'Settings saved', description: 'Google Workspace configuration updated.' })
+      toast({ title: 'Settings saved', description: 'Google Workspace configuration updated and connection verified.' })
       setShowSettings(false)
       queryClient.invalidateQueries({ queryKey: ['gw-config'] })
       queryClient.invalidateQueries({ queryKey: ['gw-stats'] })
@@ -472,10 +537,15 @@ export function GoogleWorkspacePage() {
     setSaKey('')
     setSaKeyValid(null)
     setSaKeyError('')
+    setSaFileName('')
     setAdminEmail(configData?.adminEmail || '')
+    setAdminEmailTouched(false)
     setGwDomain(configData?.domain || '')
-    setGwSchedule(configData?.scanSchedule || stats?.scanSchedule || '0 0 * * *')
+    const rawSchedule = configData?.scanSchedule || stats?.scanSchedule || '30 18 * * *'
+    setGwSchedule(GW_CRON_MIGRATE[rawSchedule] || rawSchedule)
     setGwEnabled(configData?.isEnabled ?? true)
+    setConnTesting(false)
+    setConnTestResult(null)
     setShowSettings(true)
   }
 
@@ -521,9 +591,14 @@ export function GoogleWorkspacePage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Google Workspace Monitor</h1>
-          <p className="text-muted-foreground text-sm mt-1">Security posture and compliance observatory for your Google Workspace</p>
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50">
+            <GoogleWorkspaceLogo className="h-6 w-6" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold">Google Workspace Monitor</h1>
+            <p className="text-muted-foreground text-sm mt-1">Security posture and compliance observatory for your Google Workspace</p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {canEdit && (
@@ -1764,10 +1839,10 @@ export function GoogleWorkspacePage() {
         </DialogContent>
       </Dialog>
 
-      {/* Settings Dialog */}
+      {/* Settings Dialog - Two-pane layout */}
       <Dialog open={showSettings} onOpenChange={setShowSettings}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
+        <DialogContent className="w-[95vw] max-w-3xl p-0 gap-0">
+          <DialogHeader className="px-6 pt-6 pb-4">
             <div className="flex items-center justify-between">
               <DialogTitle>Google Workspace Settings</DialogTitle>
               <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => { setShowSettings(false); setShowHelp(true) }}>
@@ -1776,82 +1851,162 @@ export function GoogleWorkspacePage() {
             </div>
             <DialogDescription>Configure Google Workspace API access for this organization.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <div className="flex items-center justify-between">
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-0 md:divide-x border-t">
+            {/* Left Pane - Credentials */}
+            <div className="p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Credentials</h3>
+
+              {/* Service Account Key */}
+              <div>
                 <label className="text-sm font-medium">Service Account JSON Key</label>
-                <label className="cursor-pointer">
-                  <input type="file" accept=".json,application/json" onChange={handleFileUpload} className="hidden" />
-                  <span className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium">
-                    <Upload className="h-3 w-3" /> Upload JSON file
+                <div className={`mt-1.5 flex items-center gap-2 border rounded-md px-3 py-2.5 ${saKeyValid === true ? 'border-green-400 bg-green-50' : saKeyValid === false ? 'border-red-400 bg-red-50' : 'bg-muted/30'}`}>
+                  <KeyRound className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="text-sm truncate flex-1">
+                    {saKeyValid === true
+                      ? (saFileName || 'Key loaded')
+                      : configData?.hasServiceAccountKey
+                        ? 'Key configured'
+                        : 'No key uploaded'}
                   </span>
-                </label>
+                  <label className="cursor-pointer shrink-0">
+                    <input type="file" accept=".json,application/json" onChange={handleFileUpload} className="hidden" />
+                    <span className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded border border-blue-200 hover:bg-blue-50 transition-colors">
+                      <Upload className="h-3 w-3" /> {configData?.hasServiceAccountKey || saKeyValid === true ? 'Replace' : 'Upload'}
+                    </span>
+                  </label>
+                </div>
+                {saKeyValid === true && (
+                  <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Valid service account JSON</p>
+                )}
+                {saKeyValid === false && saKeyError && (
+                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><XCircle className="h-3 w-3" /> {saKeyError}</p>
+                )}
+                {saKeyValid === null && configData?.hasServiceAccountKey && (
+                  <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Upload new file to replace</p>
+                )}
+                {saKeyValid === null && !configData?.hasServiceAccountKey && (
+                  <p className="text-xs text-muted-foreground mt-1">Upload JSON key from Google Cloud Console. <button className="underline text-blue-600" onClick={() => { setShowSettings(false); setShowHelp(true) }}>Need help?</button></p>
+                )}
               </div>
-              <Textarea
-                placeholder={configData?.hasServiceAccountKey ? '{"type":"service_account",...} (leave blank to keep current)' : 'Paste JSON here or use Upload button above'}
-                value={saKey}
-                onChange={e => validateAndSetKey(e.target.value)}
-                rows={5}
-                className={`mt-1 font-mono text-xs ${saKeyValid === true ? 'border-green-400' : saKeyValid === false ? 'border-red-400' : ''}`}
-              />
-              {saKeyValid === true && (
-                <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Valid service account JSON detected</p>
-              )}
-              {saKeyValid === false && saKeyError && (
-                <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><XCircle className="h-3 w-3" /> {saKeyError}</p>
-              )}
-              {saKeyValid === null && configData?.hasServiceAccountKey && (
-                <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Key configured. Leave blank to keep current key.</p>
-              )}
-              {saKeyValid === null && !configData?.hasServiceAccountKey && (
-                <p className="text-xs text-muted-foreground mt-1">Upload the JSON key file from Google Cloud Console, or paste its contents. <button className="underline text-blue-600" onClick={() => { setShowSettings(false); setShowHelp(true) }}>Need help?</button></p>
-              )}
+
+              {/* Admin Email */}
+              <div>
+                <label className="text-sm font-medium">Admin Email <span className="text-red-500">*</span></label>
+                <Input
+                  type="email"
+                  placeholder="admin@yourdomain.com"
+                  value={adminEmail}
+                  onChange={e => { setAdminEmail(e.target.value); setConnTestResult(null) }}
+                  onBlur={() => setAdminEmailTouched(true)}
+                  className={`mt-1.5 ${adminEmailTouched && !adminEmail ? 'border-red-400' : adminEmailTouched && adminEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail) ? 'border-red-400' : ''}`}
+                />
+                {adminEmailTouched && !adminEmail && (
+                  <p className="text-xs text-red-600 mt-1">Admin email is required</p>
+                )}
+                {adminEmailTouched && adminEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail) && (
+                  <p className="text-xs text-red-600 mt-1">Enter a valid email address</p>
+                )}
+                {(!adminEmailTouched || (adminEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail))) && (
+                  <p className="text-xs text-muted-foreground mt-1">Super admin for domain-wide delegation</p>
+                )}
+              </div>
+
+              {/* Domain */}
+              <div>
+                <label className="text-sm font-medium">Domain <span className="text-muted-foreground font-normal">(optional)</span></label>
+                <Input
+                  type="text"
+                  placeholder="Auto-detected from admin email"
+                  value={gwDomain}
+                  onChange={e => setGwDomain(e.target.value)}
+                  className="mt-1.5"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Leave empty to auto-detect</p>
+              </div>
             </div>
-            <div>
-              <label className="text-sm font-medium">Admin Email</label>
-              <Input
-                type="email"
-                placeholder="admin@yourdomain.com"
-                value={adminEmail}
-                onChange={e => setAdminEmail(e.target.value)}
-                className="mt-1"
-              />
-              <p className="text-xs text-muted-foreground mt-1">Super admin email used for domain-wide delegation impersonation</p>
-            </div>
-            <div>
-              <label className="text-sm font-medium">Domain (optional)</label>
-              <Input
-                type="text"
-                placeholder="Auto-detected from admin email"
-                value={gwDomain}
-                onChange={e => setGwDomain(e.target.value)}
-                className="mt-1"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium">Scan Schedule</label>
-              <Select value={gwSchedule} onValueChange={setGwSchedule}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(CRON_LABELS).map(([val, label]) => (
-                    <SelectItem key={val} value={val}>{label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox checked={gwEnabled} onCheckedChange={(v) => setGwEnabled(!!v)} id="gw-enabled" />
-              <label htmlFor="gw-enabled" className="text-sm">Enable automatic scanning</label>
+
+            {/* Right Pane - Connection & Schedule */}
+            <div className="p-5 space-y-4 border-t md:border-t-0">
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Connection & Schedule</h3>
+
+              {/* Test Connection */}
+              <div className="border rounded-md p-3 bg-muted/30">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium flex items-center gap-1.5">
+                    <Zap className="h-4 w-4" /> Test Connection
+                  </label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleTestConnection}
+                    disabled={connTesting || (!saKey.trim() && !configData?.hasServiceAccountKey) || !adminEmail || (!!saKey.trim() && saKeyValid !== true)}
+                    className="h-7 text-xs"
+                  >
+                    {connTesting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Zap className="h-3 w-3 mr-1" />}
+                    {connTesting ? 'Testing...' : 'Test'}
+                  </Button>
+                </div>
+                {connTestResult && (
+                  <div className={`mt-2 p-2 rounded text-xs ${connTestResult.valid ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {connTestResult.valid ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+                      {connTestResult.valid ? 'Connection successful' : 'Connection failed'}
+                    </div>
+                    {connTestResult.valid && (
+                      <div className="mt-1 space-y-0.5 text-green-600">
+                        {connTestResult.clientEmail && <div>SA: {connTestResult.clientEmail}</div>}
+                        {connTestResult.projectId && <div>Project: {connTestResult.projectId}</div>}
+                        {connTestResult.latency && <div>Latency: {connTestResult.latency}ms</div>}
+                      </div>
+                    )}
+                    {!connTestResult.valid && connTestResult.error && (
+                      <div className="mt-1">{connTestResult.error}</div>
+                    )}
+                  </div>
+                )}
+                {!connTestResult && (
+                  <p className="text-xs text-muted-foreground mt-1.5">Verifies credentials and admin delegation</p>
+                )}
+              </div>
+
+              {/* Scan Schedule */}
+              <div>
+                <label className="text-sm font-medium">Scan Schedule</label>
+                <Select value={gwSchedule} onValueChange={setGwSchedule}>
+                  <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="30 18 * * *">Daily at midnight IST</SelectItem>
+                    <SelectItem value="30 0,6,12,18 * * *">Every 6 hours IST</SelectItem>
+                    <SelectItem value="30 6,18 * * *">Every 12 hours IST</SelectItem>
+                    <SelectItem value="30 18 * * 6">Weekly (Sunday midnight IST)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">Indian Standard Time (UTC+5:30)</p>
+              </div>
+
+              {/* Enable toggle */}
+              <div className="flex items-center gap-2">
+                <Checkbox checked={gwEnabled} onCheckedChange={(v) => setGwEnabled(!!v)} id="gw-enabled" />
+                <label htmlFor="gw-enabled" className="text-sm">Enable automatic scanning</label>
+              </div>
             </div>
           </div>
-          <DialogFooter>
+
+          <DialogFooter className="px-6 py-4 border-t">
             <Button variant="outline" onClick={() => setShowSettings(false)}>Cancel</Button>
             <Button
-              onClick={() => saveConfigMutation.mutate()}
-              disabled={saveConfigMutation.isPending || (!saKey && !configData?.hasServiceAccountKey) || !adminEmail || (!!saKey.trim() && saKeyValid !== true)}
+              onClick={() => {
+                setAdminEmailTouched(true)
+                if (!adminEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)) return
+                if (!saKey && !configData?.hasServiceAccountKey) return
+                if (saKey.trim() && saKeyValid !== true) return
+                saveConfigMutation.mutate()
+              }}
+              disabled={saveConfigMutation.isPending || connTesting}
             >
-              {saveConfigMutation.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
-              Save
+              {(saveConfigMutation.isPending || connTesting) ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
+              {connTesting ? 'Verifying...' : saveConfigMutation.isPending ? 'Saving...' : 'Test & Save'}
             </Button>
           </DialogFooter>
         </DialogContent>

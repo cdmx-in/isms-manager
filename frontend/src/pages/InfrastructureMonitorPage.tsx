@@ -55,7 +55,11 @@ import {
   Eye,
   ShieldAlert,
   ShieldOff,
+  Zap,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react'
+import { CloudflareLogo } from '@/components/icons/ServiceLogos'
 import { formatDateTime } from '@/lib/utils'
 
 const exposureConfig: Record<string, {
@@ -103,10 +107,23 @@ const typeColors: Record<string, string> = {
 }
 
 const CRON_LABELS: Record<string, string> = {
-  '0 0 * * *': 'Daily at midnight UTC',
-  '0 */6 * * *': 'Every 6 hours',
-  '0 */12 * * *': 'Every 12 hours',
-  '0 0 * * 0': 'Weekly (Sunday midnight UTC)',
+  '30 18 * * *': 'Daily at midnight IST',
+  '30 0,6,12,18 * * *': 'Every 6 hours IST',
+  '30 6,18 * * *': 'Every 12 hours IST',
+  '30 18 * * 6': 'Weekly (Sunday midnight IST)',
+  // Legacy UTC values for display
+  '0 0 * * *': 'Daily at midnight IST',
+  '0 */6 * * *': 'Every 6 hours IST',
+  '0 */12 * * *': 'Every 12 hours IST',
+  '0 0 * * 0': 'Weekly (Sunday midnight IST)',
+}
+
+// Map old UTC cron values to new IST equivalents
+const CRON_MIGRATE: Record<string, string> = {
+  '0 0 * * *': '30 18 * * *',
+  '0 */6 * * *': '30 0,6,12,18 * * *',
+  '0 */12 * * *': '30 6,18 * * *',
+  '0 0 * * 0': '30 18 * * 6',
 }
 
 export function InfrastructureMonitorPage() {
@@ -128,8 +145,12 @@ export function InfrastructureMonitorPage() {
   const [showDetail, setShowDetail] = useState<any>(null)
   const [cfToken, setCfToken] = useState('')
   const [cfProxy, setCfProxy] = useState('')
-  const [cfSchedule, setCfSchedule] = useState('0 0 * * *')
+  const [cfSchedule, setCfSchedule] = useState('30 18 * * *')
   const [cfEnabled, setCfEnabled] = useState(true)
+  const [proxyTestResult, setProxyTestResult] = useState<any>(null)
+  const [proxyTesting, setProxyTesting] = useState(false)
+  const [tokenTestResult, setTokenTestResult] = useState<any>(null)
+  const [tokenTesting, setTokenTesting] = useState(false)
 
   // Queries
   const { data: stats, isLoading: statsLoading } = useQuery({
@@ -203,7 +224,7 @@ export function InfrastructureMonitorPage() {
   const saveConfigMutation = useMutation({
     mutationFn: () => api.infrastructure.saveConfig({
       organizationId: orgId,
-      cloudflareApiToken: cfToken,
+      cloudflareApiToken: cfToken || undefined,
       httpCheckProxy: cfProxy || undefined,
       scanSchedule: cfSchedule,
       isEnabled: cfEnabled,
@@ -236,9 +257,42 @@ export function InfrastructureMonitorPage() {
   const openSettings = () => {
     setCfToken('')
     setCfProxy(configData?.httpCheckProxy || '')
-    setCfSchedule(configData?.scanSchedule || stats?.scanSchedule || '0 0 * * *')
+    const rawSchedule = configData?.scanSchedule || stats?.scanSchedule || '30 18 * * *'
+    setCfSchedule(CRON_MIGRATE[rawSchedule] || rawSchedule)
     setCfEnabled(configData?.isEnabled ?? true)
+    setProxyTestResult(null)
+    setProxyTesting(false)
+    setTokenTestResult(null)
+    setTokenTesting(false)
     setShowSettings(true)
+  }
+
+  const handleTestToken = async () => {
+    if (!cfToken.trim()) return
+    setTokenTesting(true)
+    setTokenTestResult(null)
+    try {
+      const result = await api.infrastructure.testToken(cfToken.trim())
+      setTokenTestResult(result)
+    } catch (err: any) {
+      setTokenTestResult({ valid: false, error: err?.response?.data?.error || 'Failed to verify token' })
+    } finally {
+      setTokenTesting(false)
+    }
+  }
+
+  const handleTestProxy = async () => {
+    if (!cfProxy.trim()) return
+    setProxyTesting(true)
+    setProxyTestResult(null)
+    try {
+      const result = await api.infrastructure.testProxy(cfProxy.trim())
+      setProxyTestResult(result)
+    } catch (err: any) {
+      setProxyTestResult({ connected: false, error: err?.response?.data?.error || 'Failed to test connection' })
+    } finally {
+      setProxyTesting(false)
+    }
   }
 
   const handleExport = async () => {
@@ -274,8 +328,8 @@ export function InfrastructureMonitorPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-            <Cloud className="h-5 w-5 text-primary" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-50">
+            <CloudflareLogo className="h-6 w-6" />
           </div>
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Cloudflare DNS Monitor</h1>
@@ -454,7 +508,7 @@ export function InfrastructureMonitorPage() {
                 </div>
                 <div className="flex items-center gap-1 text-xs text-muted-foreground">
                   <Timer className="h-3.5 w-3.5" />
-                  <span>{CRON_LABELS[stats?.scanSchedule || '0 0 * * *'] || stats?.scanSchedule || 'Daily at midnight UTC'}</span>
+                  <span>{CRON_LABELS[stats?.scanSchedule || '30 18 * * *'] || stats?.scanSchedule || 'Daily at midnight IST'}</span>
                 </div>
               </div>
               {isScanning && (
@@ -707,22 +761,102 @@ export function InfrastructureMonitorPage() {
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">API Token</label>
-              <Input
-                type="password"
-                placeholder={configData?.hasApiToken ? '********** (leave blank to keep current)' : 'Enter Cloudflare API token'}
-                value={cfToken}
-                onChange={(e) => setCfToken(e.target.value)}
-              />
+              <div className="flex gap-2">
+                <Input
+                  type="password"
+                  placeholder={configData?.hasApiToken ? '********** (leave blank to keep current)' : 'Enter Cloudflare API token'}
+                  value={cfToken}
+                  onChange={(e) => { setCfToken(e.target.value); setTokenTestResult(null) }}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={handleTestToken}
+                  disabled={!cfToken.trim() || tokenTesting}
+                >
+                  {tokenTesting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}
+                  Test
+                </Button>
+              </div>
               <p className="text-xs text-muted-foreground">Requires Zone:Read and DNS:Read permissions.</p>
+              {tokenTestResult && (
+                <div className={`rounded-md border px-3 py-2 text-xs ${tokenTestResult.valid
+                  ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-950 dark:border-green-800 dark:text-green-300'
+                  : 'bg-red-50 border-red-200 text-red-800 dark:bg-red-950 dark:border-red-800 dark:text-red-300'
+                }`}>
+                  {tokenTestResult.valid ? (
+                    <div className="flex items-start gap-2">
+                      <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="font-medium">Token valid ({tokenTestResult.latency}ms)</p>
+                        {tokenTestResult.zonesCount !== undefined && (
+                          <p className="mt-0.5">Access to {tokenTestResult.zonesCount} zone{tokenTestResult.zonesCount !== 1 ? 's' : ''}</p>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-2">
+                      <XCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="font-medium">Token invalid</p>
+                        <p className="mt-0.5">{tokenTestResult.error}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">HTTP Check Proxy (optional)</label>
-              <Input
-                placeholder="http://user:pass@host:port"
-                value={cfProxy}
-                onChange={(e) => setCfProxy(e.target.value)}
-              />
+              <div className="flex gap-2">
+                <Input
+                  placeholder="http://user:pass@host:port"
+                  value={cfProxy}
+                  onChange={(e) => { setCfProxy(e.target.value); setProxyTestResult(null) }}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={handleTestProxy}
+                  disabled={!cfProxy.trim() || proxyTesting}
+                >
+                  {proxyTesting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}
+                  Test
+                </Button>
+              </div>
               <p className="text-xs text-muted-foreground">Proxy for checking domain exposure. Leave empty for direct.</p>
+              {proxyTestResult && (
+                <div className={`rounded-md border px-3 py-2 text-xs ${proxyTestResult.connected
+                  ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-950 dark:border-green-800 dark:text-green-300'
+                  : 'bg-red-50 border-red-200 text-red-800 dark:bg-red-950 dark:border-red-800 dark:text-red-300'
+                }`}>
+                  {proxyTestResult.connected ? (
+                    <div className="flex items-start gap-2">
+                      <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="font-medium">Connection successful ({proxyTestResult.latency}ms)</p>
+                        {proxyTestResult.proxyIp && (
+                          <p className="mt-0.5">IP: {proxyTestResult.proxyIp}{proxyTestResult.proxyLocation ? ` (${proxyTestResult.proxyLocation})` : ''}{proxyTestResult.proxyDataCenter ? ` - ${proxyTestResult.proxyDataCenter}` : ''}</p>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-2">
+                      <XCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="font-medium">Connection failed</p>
+                        <p className="mt-0.5">{proxyTestResult.error}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Scan Schedule</label>
@@ -731,10 +865,10 @@ export function InfrastructureMonitorPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="0 0 * * *">Daily at midnight UTC</SelectItem>
-                  <SelectItem value="0 */6 * * *">Every 6 hours</SelectItem>
-                  <SelectItem value="0 */12 * * *">Every 12 hours</SelectItem>
-                  <SelectItem value="0 0 * * 0">Weekly (Sunday midnight)</SelectItem>
+                  <SelectItem value="30 18 * * *">Daily at midnight IST</SelectItem>
+                  <SelectItem value="30 0,6,12,18 * * *">Every 6 hours IST</SelectItem>
+                  <SelectItem value="30 6,18 * * *">Every 12 hours IST</SelectItem>
+                  <SelectItem value="30 18 * * 6">Weekly (Sunday midnight IST)</SelectItem>
                 </SelectContent>
               </Select>
             </div>

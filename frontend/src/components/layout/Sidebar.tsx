@@ -19,7 +19,6 @@ import {
   ShieldOff,
   ClipboardList,
   Radio,
-  Cloud,
   Building2,
   ChevronsUpDown,
   Lock,
@@ -30,12 +29,14 @@ import { useAuthStore } from '@/stores/auth.store'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { CloudflareLogo, GoogleWorkspaceLogo, AzureLogo } from '@/components/icons/ServiceLogos'
 
 interface NavItem {
   name: string
   href: string
   icon: any
   module: string
+  serviceSlug?: string
   children?: NavItem[]
 }
 
@@ -56,9 +57,9 @@ const navItems: NavItem[] = [
     icon: Radio,
     module: 'infrastructure',
     children: [
-      { name: 'Cloudflare', href: '/infrastructure/cloudflare', icon: Cloud, module: 'infrastructure' },
-      { name: 'Google Workspace', href: '/infrastructure/google-workspace', icon: Building2, module: 'infrastructure' },
-      { name: 'Azure', href: '/infrastructure/azure', icon: Shield, module: 'infrastructure' },
+      { name: 'Cloudflare', href: '/infrastructure/cloudflare', icon: CloudflareLogo, module: 'infrastructure', serviceSlug: 'cloudflare' },
+      { name: 'Google Workspace', href: '/infrastructure/google-workspace', icon: GoogleWorkspaceLogo, module: 'infrastructure', serviceSlug: 'google_workspace' },
+      { name: 'Azure', href: '/infrastructure/azure', icon: AzureLogo, module: 'infrastructure', serviceSlug: 'azure' },
     ],
   },
   {
@@ -92,10 +93,21 @@ export function Sidebar() {
   })
   const { user, currentOrganizationId, setCurrentOrganization, hasPermission } = useAuthStore()
 
-  const visibleNavItems = navItems.filter(item => hasPermission(item.module, 'view'))
-
   const memberships = user?.organizationMemberships || []
   const currentOrg = memberships.find(m => m.organizationId === currentOrganizationId)
+  const enabledServices = currentOrg?.organization?.enabledServices || ['cloudflare', 'google_workspace', 'azure']
+
+  const visibleNavItems = navItems
+    .filter(item => hasPermission(item.module, 'view'))
+    .map(item => {
+      if (!item.children) return item
+      const filteredChildren = item.children.filter(child =>
+        !child.serviceSlug || enabledServices.includes(child.serviceSlug)
+      )
+      if (filteredChildren.length === 0 && item.children.some(c => c.serviceSlug)) return null
+      return { ...item, children: filteredChildren }
+    })
+    .filter(Boolean) as NavItem[]
 
   const switchOrg = (orgId: string) => {
     setCurrentOrganization(orgId)
@@ -136,7 +148,11 @@ export function Sidebar() {
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="w-full justify-between h-9 text-sm font-medium">
                 <div className="flex items-center gap-2 truncate">
-                  <Building2 className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                  {currentOrg?.organization?.logo ? (
+                    <img src={currentOrg.organization.logo} alt="" className="h-5 w-5 flex-shrink-0 rounded object-contain" />
+                  ) : (
+                    <Building2 className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                  )}
                   <span className="truncate">{currentOrg?.organization?.name || 'Select Org'}</span>
                 </div>
                 <ChevronsUpDown className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
@@ -165,7 +181,11 @@ export function Sidebar() {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-8 w-8" title={currentOrg?.organization?.name}>
-                <Building2 className="h-4 w-4" />
+                {currentOrg?.organization?.logo ? (
+                  <img src={currentOrg.organization.logo} alt="" className="h-5 w-5 rounded object-contain" />
+                ) : (
+                  <Building2 className="h-4 w-4" />
+                )}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent side="right" align="start">

@@ -25,14 +25,28 @@ import {
   Search, RefreshCw, Loader2, ChevronLeft, ChevronRight,
   Download, Settings2, KeyRound, Server, Globe, Shield,
   CheckCircle2, XCircle, AlertCircle, MinusCircle, Info,
-  HelpCircle, Copy, Check, Lock, Unlock, Eye,
+  HelpCircle, Copy, Check, Lock, Unlock, Eye, Zap,
 } from 'lucide-react'
+import { AzureLogo } from '@/components/icons/ServiceLogos'
+import { Label } from '@/components/ui/label'
 
 const CRON_LABELS: Record<string, string> = {
-  '0 2 * * *': 'Daily at 2:00 AM UTC',
-  '0 */6 * * *': 'Every 6 hours',
-  '0 */12 * * *': 'Every 12 hours',
-  '0 0 * * 0': 'Weekly (Sunday midnight UTC)',
+  '30 18 * * *': 'Daily at midnight IST',
+  '30 0,6,12,18 * * *': 'Every 6 hours IST',
+  '30 6,18 * * *': 'Every 12 hours IST',
+  '30 18 * * 6': 'Weekly (Sunday midnight IST)',
+  // Legacy UTC for display
+  '0 2 * * *': 'Daily at midnight IST',
+  '0 */6 * * *': 'Every 6 hours IST',
+  '0 */12 * * *': 'Every 12 hours IST',
+  '0 0 * * 0': 'Weekly (Sunday midnight IST)',
+}
+
+const AZ_CRON_MIGRATE: Record<string, string> = {
+  '0 2 * * *': '30 18 * * *',
+  '0 */6 * * *': '30 0,6,12,18 * * *',
+  '0 */12 * * *': '30 6,18 * * *',
+  '0 0 * * 0': '30 18 * * 6',
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -101,8 +115,15 @@ export function AzurePage() {
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
   const [subscriptionId, setSubscriptionId] = useState('')
-  const [scanSchedule, setScanSchedule] = useState('0 2 * * *')
+  const [scanSchedule, setScanSchedule] = useState('30 18 * * *')
   const [isEnabled, setIsEnabled] = useState(true)
+  const [fieldsTouched, setFieldsTouched] = useState<Record<string, boolean>>({})
+  const touchField = (f: string) => setFieldsTouched(prev => ({ ...prev, [f]: true }))
+  const touchAll = () => setFieldsTouched({ tenantId: true, clientId: true, subscriptionId: true })
+
+  // Connection test
+  const [connTesting, setConnTesting] = useState(false)
+  const [connTestResult, setConnTestResult] = useState<any>(null)
 
   // Filters
   const [userSearch, setUserSearch] = useState('')
@@ -216,17 +237,42 @@ export function AzurePage() {
 
   // =========== MUTATIONS ===========
   const saveConfigMut = useMutation({
-    mutationFn: () => api.azure.saveConfig({
-      organizationId: orgId,
-      tenantId,
-      clientId,
-      clientSecret: clientSecret || undefined,
-      subscriptionId,
-      scanSchedule,
-      isEnabled,
-    }),
+    mutationFn: async () => {
+      // Test connection before saving
+      setConnTesting(true)
+      setConnTestResult(null)
+      try {
+        const testResult = await api.azure.testConnection({
+          tenantId,
+          clientId,
+          clientSecret: clientSecret || undefined,
+          subscriptionId,
+          organizationId: !clientSecret ? orgId : undefined,
+        })
+        setConnTestResult(testResult)
+        if (!testResult.valid) {
+          throw { response: { data: { message: testResult.error || 'Connection test failed. Please verify your credentials.' } } }
+        }
+      } catch (err: any) {
+        if (err.response?.data?.message) throw err
+        setConnTestResult({ valid: false, error: err.message || 'Connection test failed' })
+        throw { response: { data: { message: err.response?.data?.error?.message || 'Connection test failed.' } } }
+      } finally {
+        setConnTesting(false)
+      }
+
+      return api.azure.saveConfig({
+        organizationId: orgId,
+        tenantId,
+        clientId,
+        clientSecret: clientSecret || undefined,
+        subscriptionId,
+        scanSchedule,
+        isEnabled,
+      })
+    },
     onSuccess: () => {
-      toast({ title: 'Settings saved', description: 'Azure configuration updated successfully.' })
+      toast({ title: 'Settings saved', description: 'Azure configuration updated and connection verified.' })
       queryClient.invalidateQueries({ queryKey: ['azure-config'] })
       setSettingsOpen(false)
       setClientSecret('')
@@ -255,6 +301,25 @@ export function AzurePage() {
     },
   })
 
+  const handleTestConnection = async () => {
+    setConnTesting(true)
+    setConnTestResult(null)
+    try {
+      const result = await api.azure.testConnection({
+        tenantId,
+        clientId,
+        clientSecret: clientSecret || undefined,
+        subscriptionId,
+        organizationId: !clientSecret ? orgId : undefined,
+      })
+      setConnTestResult(result)
+    } catch (err: any) {
+      setConnTestResult({ valid: false, error: err.response?.data?.error?.message || 'Connection test failed' })
+    } finally {
+      setConnTesting(false)
+    }
+  }
+
   // Open settings with existing config
   const openSettings = () => {
     const cfg = configQuery.data
@@ -262,17 +327,21 @@ export function AzurePage() {
       setTenantId(cfg.tenantId || '')
       setClientId(cfg.clientId || '')
       setSubscriptionId(cfg.subscriptionId || '')
-      setScanSchedule(cfg.scanSchedule || '0 2 * * *')
+      const rawSchedule = cfg.scanSchedule || '30 18 * * *'
+      setScanSchedule(AZ_CRON_MIGRATE[rawSchedule] || rawSchedule)
       setIsEnabled(cfg.isEnabled ?? true)
       setClientSecret('')
     } else {
       setTenantId('')
       setClientId('')
       setSubscriptionId('')
-      setScanSchedule('0 2 * * *')
+      setScanSchedule('30 18 * * *')
       setIsEnabled(true)
       setClientSecret('')
     }
+    setFieldsTouched({})
+    setConnTesting(false)
+    setConnTestResult(null)
     setSettingsOpen(true)
   }
 
@@ -312,9 +381,14 @@ export function AzurePage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Azure Monitor</h1>
-          <p className="text-muted-foreground">Entra ID & Infrastructure security monitoring</p>
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-50">
+            <AzureLogo className="h-6 w-6" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold">Azure Monitor</h1>
+            <p className="text-muted-foreground">Entra ID & Infrastructure security monitoring</p>
+          </div>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setHelpOpen(true)}>
@@ -1005,57 +1079,169 @@ export function AzurePage() {
 
       {/* ========== SETTINGS DIALOG ========== */}
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Azure Configuration</DialogTitle>
+        <DialogContent className="w-[95vw] max-w-3xl p-0 gap-0">
+          <DialogHeader className="px-6 pt-6 pb-4">
+            <div className="flex items-center justify-between">
+              <DialogTitle>Azure Configuration</DialogTitle>
+              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => { setSettingsOpen(false); setHelpOpen(true) }}>
+                <HelpCircle className="h-4 w-4 mr-1" /> Setup Guide
+              </Button>
+            </div>
             <DialogDescription>Configure Azure Service Principal credentials for monitoring.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <label className="text-sm font-medium">Tenant ID</label>
-              <Input value={tenantId} onChange={e => setTenantId(e.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-0 md:divide-x border-t">
+            {/* Left Pane - Credentials */}
+            <div className="p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Credentials</h3>
+
+              <div>
+                <label className="text-sm font-medium">Tenant ID <span className="text-red-500">*</span></label>
+                <Input
+                  value={tenantId}
+                  onChange={e => { setTenantId(e.target.value); setConnTestResult(null) }}
+                  onBlur={() => touchField('tenantId')}
+                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                  className={`mt-1.5 font-mono text-xs ${fieldsTouched.tenantId && !tenantId ? 'border-red-400' : ''}`}
+                />
+                {fieldsTouched.tenantId && !tenantId && (
+                  <p className="text-xs text-red-600 mt-1">Tenant ID is required</p>
+                )}
+                {(!fieldsTouched.tenantId || tenantId) && (
+                  <p className="text-xs text-muted-foreground mt-1">Directory (tenant) ID from Azure AD</p>
+                )}
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">Client ID <span className="text-red-500">*</span></label>
+                <Input
+                  value={clientId}
+                  onChange={e => { setClientId(e.target.value); setConnTestResult(null) }}
+                  onBlur={() => touchField('clientId')}
+                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                  className={`mt-1.5 font-mono text-xs ${fieldsTouched.clientId && !clientId ? 'border-red-400' : ''}`}
+                />
+                {fieldsTouched.clientId && !clientId && (
+                  <p className="text-xs text-red-600 mt-1">Client ID is required</p>
+                )}
+                {(!fieldsTouched.clientId || clientId) && (
+                  <p className="text-xs text-muted-foreground mt-1">Application (client) ID from app registration</p>
+                )}
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">Client Secret</label>
+                <Input
+                  type="password"
+                  value={clientSecret}
+                  onChange={e => { setClientSecret(e.target.value); setConnTestResult(null) }}
+                  placeholder={configQuery.data?.hasClientSecret ? 'Configured (leave blank to keep)' : 'Enter client secret'}
+                  className="mt-1.5"
+                />
+                {configQuery.data?.hasClientSecret ? (
+                  <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Secret configured. Leave blank to keep.</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground mt-1">From Certificates & secrets in app registration</p>
+                )}
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">Subscription ID <span className="text-red-500">*</span></label>
+                <Input
+                  value={subscriptionId}
+                  onChange={e => { setSubscriptionId(e.target.value); setConnTestResult(null) }}
+                  onBlur={() => touchField('subscriptionId')}
+                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                  className={`mt-1.5 font-mono text-xs ${fieldsTouched.subscriptionId && !subscriptionId ? 'border-red-400' : ''}`}
+                />
+                {fieldsTouched.subscriptionId && !subscriptionId && (
+                  <p className="text-xs text-red-600 mt-1">Subscription ID is required</p>
+                )}
+                {(!fieldsTouched.subscriptionId || subscriptionId) && (
+                  <p className="text-xs text-muted-foreground mt-1">Azure subscription for resource monitoring</p>
+                )}
+              </div>
             </div>
-            <div>
-              <label className="text-sm font-medium">Client ID (Application ID)</label>
-              <Input value={clientId} onChange={e => setClientId(e.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
-            </div>
-            <div>
-              <label className="text-sm font-medium">Client Secret</label>
-              <Input
-                type="password"
-                value={clientSecret}
-                onChange={e => setClientSecret(e.target.value)}
-                placeholder={configQuery.data?.hasClientSecret ? '(configured - leave blank to keep)' : 'Enter client secret'}
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium">Subscription ID</label>
-              <Input value={subscriptionId} onChange={e => setSubscriptionId(e.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
-            </div>
-            <div>
-              <label className="text-sm font-medium">Scan Schedule</label>
-              <Select value={scanSchedule} onValueChange={setScanSchedule}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(CRON_LABELS).map(([val, label]) => (
-                    <SelectItem key={val} value={val}>{label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox id="azEnabled" checked={isEnabled} onCheckedChange={(v) => setIsEnabled(!!v)} />
-              <label htmlFor="azEnabled" className="text-sm">Enable automated scanning</label>
+
+            {/* Right Pane - Connection & Schedule */}
+            <div className="p-5 space-y-4 border-t md:border-t-0">
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Connection & Schedule</h3>
+
+              {/* Test Connection */}
+              <div className="border rounded-md p-3 bg-muted/30">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium flex items-center gap-1.5">
+                    <Zap className="h-4 w-4" /> Test Connection
+                  </label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleTestConnection}
+                    disabled={connTesting || !tenantId || !clientId || !subscriptionId || (!clientSecret && !configQuery.data?.hasClientSecret)}
+                    className="h-7 text-xs"
+                  >
+                    {connTesting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Zap className="h-3 w-3 mr-1" />}
+                    {connTesting ? 'Testing...' : 'Test'}
+                  </Button>
+                </div>
+                {connTestResult && (
+                  <div className={`mt-2 p-2 rounded text-xs ${connTestResult.valid ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {connTestResult.valid ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+                      {connTestResult.valid ? 'Connection successful' : 'Connection failed'}
+                    </div>
+                    {connTestResult.valid && (
+                      <div className="mt-1 space-y-0.5 text-green-600">
+                        {connTestResult.tenantId && <div>Tenant: {connTestResult.tenantId}</div>}
+                        {connTestResult.latency && <div>Latency: {connTestResult.latency}ms</div>}
+                      </div>
+                    )}
+                    {!connTestResult.valid && connTestResult.error && (
+                      <div className="mt-1">{connTestResult.error}</div>
+                    )}
+                  </div>
+                )}
+                {!connTestResult && (
+                  <p className="text-xs text-muted-foreground mt-1.5">Verifies Service Principal credentials and API permissions</p>
+                )}
+              </div>
+
+              {/* Scan Schedule */}
+              <div>
+                <label className="text-sm font-medium">Scan Schedule</label>
+                <Select value={scanSchedule} onValueChange={setScanSchedule}>
+                  <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="30 18 * * *">Daily at midnight IST</SelectItem>
+                    <SelectItem value="30 0,6,12,18 * * *">Every 6 hours IST</SelectItem>
+                    <SelectItem value="30 6,18 * * *">Every 12 hours IST</SelectItem>
+                    <SelectItem value="30 18 * * 6">Weekly (Sunday midnight IST)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">Indian Standard Time (UTC+5:30)</p>
+              </div>
+
+              {/* Enable toggle */}
+              <div className="flex items-center gap-2">
+                <Checkbox id="azEnabled" checked={isEnabled} onCheckedChange={(v) => setIsEnabled(!!v)} />
+                <label htmlFor="azEnabled" className="text-sm">Enable automated scanning</label>
+              </div>
             </div>
           </div>
-          <DialogFooter>
+
+          <DialogFooter className="px-6 py-4 border-t">
             <Button variant="outline" onClick={() => setSettingsOpen(false)}>Cancel</Button>
             <Button
-              onClick={() => saveConfigMut.mutate()}
-              disabled={saveConfigMut.isPending || !tenantId || !clientId || !subscriptionId || (!clientSecret && !configQuery.data?.hasClientSecret)}
+              onClick={() => {
+                touchAll()
+                if (!tenantId || !clientId || !subscriptionId) return
+                if (!clientSecret && !configQuery.data?.hasClientSecret) return
+                saveConfigMut.mutate()
+              }}
+              disabled={saveConfigMut.isPending || connTesting}
             >
-              {saveConfigMut.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
-              Save & Verify
+              {(saveConfigMut.isPending || connTesting) ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
+              {connTesting ? 'Verifying...' : saveConfigMut.isPending ? 'Saving...' : 'Test & Save'}
             </Button>
           </DialogFooter>
         </DialogContent>

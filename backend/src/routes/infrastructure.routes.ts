@@ -50,28 +50,41 @@ router.post(
   asyncHandler(async (req, res) => {
     const { organizationId, cloudflareApiToken, httpCheckProxy, scanSchedule, isEnabled } = req.body;
     if (!organizationId) throw new AppError('organizationId is required', 400);
-    if (!cloudflareApiToken) throw new AppError('cloudflareApiToken is required', 400);
 
-    // Verify the token works
-    const cfClient = createCloudflareClient(cloudflareApiToken);
-    const valid = await cfClient.verifyToken();
-    if (!valid) {
-      throw new AppError('Invalid Cloudflare API token', 400);
+    // Check if config already exists
+    const existing = await prisma.infraMonitorConfig.findUnique({ where: { organizationId } });
+
+    // Token is required for new configs, optional for updates (blank = keep current)
+    if (!cloudflareApiToken && !existing) {
+      throw new AppError('cloudflareApiToken is required', 400);
+    }
+
+    // If a new token is provided, verify it works
+    if (cloudflareApiToken) {
+      const cfClient = createCloudflareClient(cloudflareApiToken);
+      const valid = await cfClient.verifyToken();
+      if (!valid) {
+        throw new AppError('Invalid Cloudflare API token', 400);
+      }
+    }
+
+    const updateData: any = {
+      httpCheckProxy: httpCheckProxy || null,
+      scanSchedule: scanSchedule || '30 18 * * *',
+      isEnabled: isEnabled !== false,
+    };
+    if (cloudflareApiToken) {
+      updateData.cloudflareApiToken = cloudflareApiToken;
     }
 
     const config = await prisma.infraMonitorConfig.upsert({
       where: { organizationId },
-      update: {
-        cloudflareApiToken,
-        httpCheckProxy: httpCheckProxy || null,
-        scanSchedule: scanSchedule || '0 0 * * *',
-        isEnabled: isEnabled !== false,
-      },
+      update: updateData,
       create: {
         organizationId,
-        cloudflareApiToken,
+        cloudflareApiToken: cloudflareApiToken || existing?.cloudflareApiToken || '',
         httpCheckProxy: httpCheckProxy || null,
-        scanSchedule: scanSchedule || '0 0 * * *',
+        scanSchedule: scanSchedule || '30 18 * * *',
         isEnabled: isEnabled !== false,
       },
     });
@@ -90,12 +103,128 @@ router.post(
       data: {
         id: config.id,
         organizationId: config.organizationId,
-        hasApiToken: true,
+        hasApiToken: !!config.cloudflareApiToken,
         httpCheckProxy: config.httpCheckProxy || '',
         scanSchedule: config.scanSchedule,
         isEnabled: config.isEnabled,
       },
     });
+  })
+);
+
+// POST /api/infrastructure/test-token
+router.post(
+  '/test-token',
+  authenticate,
+  requirePermission('infrastructure', 'edit'),
+  asyncHandler(async (req, res) => {
+    const { cloudflareApiToken } = req.body;
+    if (!cloudflareApiToken) throw new AppError('cloudflareApiToken is required', 400);
+
+    const startTime = Date.now();
+    try {
+      const cfClient = createCloudflareClient(cloudflareApiToken);
+      const valid = await cfClient.verifyToken();
+      const latency = Date.now() - startTime;
+
+      if (valid) {
+        // Get zones count to show useful info
+        let zonesCount = 0;
+        try {
+          const zones = await cfClient.getAllZones();
+          zonesCount = zones.length;
+        } catch { /* ignore */ }
+
+        res.json({
+          success: true,
+          data: {
+            valid: true,
+            latency,
+            zonesCount,
+          },
+        });
+      } else {
+        res.json({
+          success: true,
+          data: {
+            valid: false,
+            latency,
+            error: 'Token verification failed. Check permissions: Zone:Read and DNS:Read required.',
+          },
+        });
+      }
+    } catch (err: any) {
+      const latency = Date.now() - startTime;
+      res.json({
+        success: true,
+        data: {
+          valid: false,
+          latency,
+          error: err.message || 'Failed to connect to Cloudflare API',
+        },
+      });
+    }
+  })
+);
+
+// POST /api/infrastructure/test-proxy
+router.post(
+  '/test-proxy',
+  authenticate,
+  requirePermission('infrastructure', 'edit'),
+  asyncHandler(async (req, res) => {
+    const { proxyUrl } = req.body;
+    if (!proxyUrl) throw new AppError('proxyUrl is required', 400);
+
+    const { HttpsProxyAgent } = await import('https-proxy-agent');
+    const { HttpProxyAgent } = await import('http-proxy-agent');
+    const axios = (await import('axios')).default;
+
+    const startTime = Date.now();
+    try {
+      const response = await axios.get('https://cloudflare.com/cdn-cgi/trace', {
+        httpsAgent: new HttpsProxyAgent(proxyUrl),
+        httpAgent: new HttpProxyAgent(proxyUrl),
+        timeout: 10000,
+        validateStatus: () => true,
+      });
+      const latency = Date.now() - startTime;
+
+      // Parse trace response for IP info
+      const traceData: Record<string, string> = {};
+      if (typeof response.data === 'string') {
+        response.data.split('\n').forEach((line: string) => {
+          const [key, val] = line.split('=');
+          if (key && val) traceData[key.trim()] = val.trim();
+        });
+      }
+
+      res.json({
+        success: true,
+        data: {
+          connected: true,
+          latency,
+          statusCode: response.status,
+          proxyIp: traceData.ip || null,
+          proxyLocation: traceData.loc || null,
+          proxyDataCenter: traceData.colo || null,
+        },
+      });
+    } catch (err: any) {
+      const latency = Date.now() - startTime;
+      res.json({
+        success: true,
+        data: {
+          connected: false,
+          latency,
+          error: err.code === 'ECONNREFUSED' ? 'Connection refused'
+            : err.code === 'ECONNRESET' ? 'Connection reset'
+            : err.code === 'ENOTFOUND' ? 'Host not found'
+            : err.code === 'ETIMEDOUT' ? 'Connection timed out'
+            : err.message || 'Connection failed',
+        },
+      });
+    }
   })
 );
 
